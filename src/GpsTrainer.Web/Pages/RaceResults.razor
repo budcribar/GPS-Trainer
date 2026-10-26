@@ -1,0 +1,47 @@
+@page "/races/results"
+@inject GpsApi Api
+@inject Session Session
+
+<PageTitle>Race results</PageTitle>
+<h1>Race results</h1>
+<p><a href="races/register">Register</a> · <a href="races/promote">Promote</a></p>
+@if (Session.Login is null)
+{
+    <p>Sign in to see races enabled for your login. Published interval times are on each course.</p>
+}
+else if (races is null)
+{
+    <p>Loading…</p>
+}
+else if (races.Count == 0)
+{
+    <p>No races yet. Finish a course on the phone and synchronize.</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>When</th><th>Distance km</th><th>Goal</th><th>Comments</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var race in races)
+        {
+            <tr>
+                <td>@race.StartTime.ToLocalTime().ToString("g")</td>
+                <td>@race.ElapsedDistanceKm.ToString("0.00")</td>
+                <td>@race.GoalTime.ToString()</td>
+                <td>@race.Comments</td>
+                <td><a href="@($"intervals/{race.CourseId}")">Intervals</a></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<Race>? races;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is not null)
+            races = await Api.RacesAsync();
+    }
+}

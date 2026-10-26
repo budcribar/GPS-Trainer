@@ -1,0 +1,57 @@
+@inject IJSRuntime Js
+
+<input @key="Id" id="@Id" type="@Type" autocomplete="@Autocomplete" autocapitalize="@Autocapitalize" spellcheck="@Spellcheck"
+       placeholder="@Placeholder" aria-invalid="@AriaInvalid" aria-describedby="@AriaDescribedBy"
+       @bind="current" @bind:event="oninput" @bind:after="Publish" @onchange="OnChange" />
+
+@code {
+    private string current = "";
+    private bool ready;
+    private bool push;
+
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter] public string Type { get; set; } = "text";
+    [Parameter] public string? Autocomplete { get; set; }
+    [Parameter] public string? Autocapitalize { get; set; }
+    [Parameter] public string? Spellcheck { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string? AriaInvalid { get; set; }
+    [Parameter] public string? AriaDescribedBy { get; set; }
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (!ready)
+        {
+            current = Value ?? "";
+            return;
+        }
+
+        var dom = FieldValues.Read(Js, Id);
+        current = !string.IsNullOrEmpty(dom) ? dom : Value ?? "";
+        push = current != (Value ?? "");
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        ready = true;
+        if (!push)
+            return;
+        push = false;
+        Publish();
+    }
+
+    private void OnChange(ChangeEventArgs e)
+    {
+        current = e.Value?.ToString() ?? "";
+        Publish();
+    }
+
+    private void Publish()
+    {
+        if (!ValueChanged.HasDelegate || current == (Value ?? ""))
+            return;
+        _ = ValueChanged.InvokeAsync(current);
+    }
+}

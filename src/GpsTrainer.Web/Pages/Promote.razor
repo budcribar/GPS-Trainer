@@ -1,0 +1,43 @@
+@page "/races/promote"
+@inject GpsApi Api
+@inject Session Session
+
+<PageTitle>Promote a race</PageTitle>
+<h1>Promote a race</h1>
+@if (Session.Login is null)
+{
+    <p>Sign in to promote a course you own.</p>
+}
+else
+{
+    <EditForm Model="form" OnValidSubmit="Submit">
+        <div class="field"><label>Course id</label><InputText @bind-Value="courseId" /></div>
+        <div class="field"><label>Starts</label><InputDate @bind-Value="form.RaceDateStart" /></div>
+        <div class="field"><label>Ends</label><InputDate @bind-Value="form.RaceDateFinish" /></div>
+        <div class="field"><label>Entry fee</label><InputNumber @bind-Value="form.EntryFee" /></div>
+        <button type="submit">Promote</button>
+    </EditForm>
+}
+@if (!string.IsNullOrEmpty(message))
+{
+    <p>@message</p>
+}
+
+@code {
+    private readonly RacePromotionDto form = new() { RaceDateStart = DateTime.Today, RaceDateFinish = DateTime.Today.AddDays(1) };
+    private string courseId = "";
+    private string? message;
+
+    private async Task Submit()
+    {
+        if (!Guid.TryParse(courseId, out var id))
+        {
+            message = "Enter the course id from the editor.";
+            return;
+        }
+        form.CourseId = id;
+        form.Login = Session.Login ?? "";
+        var saved = await Api.PromoteAsync(form);
+        message = saved is null ? "That course could not be promoted." : "Promoted.";
+    }
+}

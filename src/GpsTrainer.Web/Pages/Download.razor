@@ -1,0 +1,84 @@
+@page "/download"
+@inject GpsApi Api
+
+<PageTitle>Download</PageTitle>
+<section class="download">
+    <img class="download-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+    <h1>Download</h1>
+    <p>Use the gpsTrainer phone app with the same account as this site.</p>
+    <p>Sign in, then enable a course for download. The phone picks it up the next time it synchronizes.</p>
+    <p><a href="courses">Your courses</a></p>
+    <div class="store-badges">
+        @if (_google is null)
+        {
+            <div class="store-badge store-badge-soon" aria-disabled="true">
+                <svg class="store-badge-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M8 5.2v13.6l11.2-6.8L8 5.2z" />
+                </svg>
+                <span class="store-badge-copy">
+                    <span class="store-badge-kicker">Coming soon</span>
+                    <span class="store-badge-name">Get it on Google Play</span>
+                </span>
+            </div>
+        }
+        else
+        {
+            <a class="store-badge" href="@_google" target="_blank" rel="noopener noreferrer">
+                <svg class="store-badge-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M8 5.2v13.6l11.2-6.8L8 5.2z" />
+                </svg>
+                <span class="store-badge-copy">
+                    <span class="store-badge-name">Get it on Google Play</span>
+                </span>
+            </a>
+        }
+        @if (_apple is null)
+        {
+            <div class="store-badge store-badge-soon" aria-disabled="true">
+                <svg class="store-badge-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                    <path d="M11 18.5h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <span class="store-badge-copy">
+                    <span class="store-badge-kicker">Coming soon</span>
+                    <span class="store-badge-name">Download on the App Store</span>
+                </span>
+            </div>
+        }
+        else
+        {
+            <a class="store-badge" href="@_apple" target="_blank" rel="noopener noreferrer">
+                <svg class="store-badge-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                    <path d="M11 18.5h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <span class="store-badge-copy">
+                    <span class="store-badge-name">Download on the App Store</span>
+                </span>
+            </a>
+        }
+    </div>
+</section>
+
+@code {
+    private string? _google;
+    private string? _apple;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var site = await Api.SiteAsync();
+        _google = StoreLink(site?.GooglePlayUrl);
+        _apple = StoreLink(site?.AppStoreUrl);
+    }
+
+    private static string? StoreLink(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        var trimmed = value.Trim();
+        return Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? trimmed
+            : null;
+    }
+}

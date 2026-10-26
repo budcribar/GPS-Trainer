@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Ride with GPS" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Creek path</name>
+  </metadata>
+  <wpt lat="40.020000" lon="-105.280000">
+    <name>Start</name>
+    <desc>parking lot</desc>
+  </wpt>
+  <wpt lat="40.021000" lon="-105.280000">
+    <name>Water</name>
+    <desc>left side</desc>
+  </wpt>
+  <rte>
+    <name>Creek path</name>
+    <rtept lat="40.020000" lon="-105.280000"><ele>1600</ele></rtept>
+    <rtept lat="40.021000" lon="-105.280000"><ele>1610</ele></rtept>
+    <rtept lat="40.021000" lon="-105.278500"><ele>1605</ele></rtept>
+  </rte>
+</gpx>

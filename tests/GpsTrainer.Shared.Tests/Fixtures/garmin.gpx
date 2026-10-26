@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Garmin Connect" version="1.1"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <metadata>
+    <name>Lunch loop</name>
+  </metadata>
+  <trk>
+    <name>Lunch loop</name>
+    <trkseg>
+      <trkpt lat="40.010000" lon="-105.270000">
+        <ele>1580</ele>
+        <time>2024-06-02T16:00:00Z</time>
+        <extensions>
+          <gpxtpx:TrackPointExtension>
+            <gpxtpx:hr>128</gpxtpx:hr>
+          </gpxtpx:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="40.011000" lon="-105.270000">
+        <ele>1595</ele>
+        <time>2024-06-02T16:04:00Z</time>
+        <extensions>
+          <gpxtpx:TrackPointExtension>
+            <gpxtpx:hr>141</gpxtpx:hr>
+          </gpxtpx:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="40.011000" lon="-105.268500">
+        <time>2024-06-02T16:08:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

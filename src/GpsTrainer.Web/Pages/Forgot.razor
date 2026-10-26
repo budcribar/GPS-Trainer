@@ -1,0 +1,28 @@
+@page "/forgot"
+@inject GpsApi Api
+
+<PageTitle>Forgot password</PageTitle>
+<h1>Forgot password</h1>
+<p>Enter the login or the email on the account. This form does not ask a security question.</p>
+<EditForm Model="form" OnValidSubmit="Submit">
+    <div class="field"><label>Login</label><InputText @bind-Value="form.Login" /></div>
+    <div class="field"><label>Email</label><InputText @bind-Value="form.Email" /></div>
+    <button type="submit">Request reset</button>
+</EditForm>
+@if (!string.IsNullOrEmpty(message))
+{
+    <p>@message</p>
+}
+
+@code {
+    private readonly ForgotPasswordRequest form = new();
+    private string? message;
+
+    private async Task Submit()
+    {
+        var ok = await Api.ForgotAsync(form);
+        message = ok
+            ? "If that account exists, a reset was issued."
+            : "The request did not go through.";
+    }
+}

@@ -1,0 +1,58 @@
+@page "/intervals/{CourseId:guid}"
+@inject GpsApi Api
+
+<PageTitle>Intervals</PageTitle>
+<h1>Intervals</h1>
+<p>Each column is one start/finish pair on the course. A race is listed when the recorded track crosses every pair.</p>
+@if (markers is null)
+{
+    <p>Loading…</p>
+}
+else if (markers.Count == 0)
+{
+    <p>This course has no interval markers. Add a start interval and a finish interval in the <a href="@($"editor/{CourseId}")">editor</a>.</p>
+}
+else if (rows is null || rows.Count == 0)
+{
+    <p>@markers.Count interval(s) on the course. No race has crossed all of them yet.</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                @for (var i = 1; i <= markers.Count; i++)
+                {
+                    <th>@(markers.Count >= i && !string.IsNullOrWhiteSpace(markers[i - 1].Name) ? markers[i - 1].Name : "Interval " + i)</th>
+                }
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in rows)
+        {
+            <tr>
+                <td>@row.Date.ToLocalTime().ToString("g")</td>
+                @foreach (var split in row.Splits)
+                {
+                    <td>@split</td>
+                }
+                <td>@row.Total</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    [Parameter] public Guid CourseId { get; set; }
+    private IReadOnlyList<CourseIntervalDto>? markers;
+    private IReadOnlyList<IntervalResultDto>? rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        markers = await Api.IntervalsAsync(CourseId);
+        rows = await Api.IntervalResultsAsync(CourseId);
+    }
+}

@@ -1,0 +1,48 @@
+@page "/races/register"
+@inject GpsApi Api
+@inject Session Session
+
+<PageTitle>Register</PageTitle>
+<h1>Register for a race</h1>
+@if (promotions is null)
+{
+    <p>Loading…</p>
+}
+else if (promotions.Count == 0)
+{
+    <p>No promoted races.</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>Starts</th><th>Ends</th><th>Entry fee</th><th></th></tr></thead>
+        <tbody>
+        @foreach (var promo in promotions)
+        {
+            <tr>
+                <td>@promo.RaceDateStart.ToLocalTime().ToString("d")</td>
+                <td>@promo.RaceDateFinish.ToLocalTime().ToString("d")</td>
+                <td>@promo.EntryFee.ToString("0.00")</td>
+                <td><button @onclick="() => RegisterAsync(promo.RacePromotionId)" disabled="@(Session.Login is null)">Register</button></td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+@if (!string.IsNullOrEmpty(message))
+{
+    <p>@message</p>
+}
+
+@code {
+    private IReadOnlyList<RacePromotionDto>? promotions;
+    private string? message;
+
+    protected override async Task OnInitializedAsync() => promotions = await Api.PromotionsAsync();
+
+    private async Task RegisterAsync(Guid id)
+    {
+        var ok = await Api.RegisterAsync(id);
+        message = ok ? "Registered." : "Sign in before registering.";
+    }
+}

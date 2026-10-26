@@ -1,0 +1,62 @@
+﻿@using GpsTrainer.Web.Services
+@inject Session Session
+@inject IJSRuntime Js
+@implements IDisposable
+
+@if (_ready)
+{
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <PageTitle>Not found</PageTitle>
+            <LayoutView Layout="@typeof(MainLayout)">
+                <p>That page is not on this site.</p>
+            </LayoutView>
+        </NotFound>
+    </Router>
+}
+
+@code {
+    private bool _ready;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += Persist;
+        try
+        {
+            var json = await Js.InvokeAsync<string?>("gpsTrainerSession.load");
+            var snapshot = SessionSnapshot.Parse(json);
+            if (snapshot is not null)
+                Session.Apply(snapshot);
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        _ready = true;
+    }
+
+    private async void Persist()
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(Session.Token))
+                await Js.InvokeVoidAsync("gpsTrainerSession.clear");
+            else
+                await Js.InvokeVoidAsync("gpsTrainerSession.save", SessionSnapshot.Serialize(Session.Capture()));
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    public void Dispose() => Session.Changed -= Persist;
+}

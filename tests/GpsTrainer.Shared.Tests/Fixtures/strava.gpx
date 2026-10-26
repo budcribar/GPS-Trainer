@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="StravaGPX Android" version="1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd"
+  xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <time>2024-06-01T15:00:00Z</time>
+  </metadata>
+  <trk>
+    <name>Morning Ride</name>
+    <type>cycling</type>
+    <trkseg>
+      <trkpt lat="40.000000" lon="-105.000000"><ele>1620.0</ele><time>2024-06-01T15:00:00Z</time></trkpt>
+      <trkpt lat="40.000900" lon="-105.000000"><ele>1640.0</ele><time>2024-06-01T15:01:00Z</time></trkpt>
+      <trkpt lat="40.000900" lon="-105.001200"><ele>1630.0</ele><time>2024-06-01T15:02:00Z</time></trkpt>
+      <trkpt lat="40.001800" lon="-105.001200"><ele>1610.0</ele><time>2024-06-01T15:03:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

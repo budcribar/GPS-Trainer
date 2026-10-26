@@ -1,0 +1,68 @@
+@page "/find"
+@inject GpsApi Api
+@inject Session Session
+@using System.Globalization
+
+<PageTitle>Find a course</PageTitle>
+<h1>Find a course</h1>
+<p>Published courses that an admin has approved, within the radius of the point you enter.</p>
+<div class="field"><label>Latitude</label><input @bind="latitude" /></div>
+<div class="field"><label>Longitude</label><input @bind="longitude" /></div>
+<div class="field"><label>Radius km</label><input @bind="radius" /></div>
+<button @onclick="Search">Search</button>
+@if (courses is null)
+{
+    <p>Search to list approved courses.</p>
+}
+else if (courses.Count == 0)
+{
+    <p>No approved courses in that radius.</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>Name</th><th>City</th><th>Distance km</th></tr></thead>
+        <tbody>
+        @foreach (var course in courses)
+        {
+            <tr>
+                <td>@course.Name</td>
+                <td>@course.City @course.State</td>
+                <td>@course.ElapsedDistanceKm.ToString("0.00")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private string latitude = MapDefaults.FortCollinsLatitude.ToString(CultureInfo.InvariantCulture);
+    private string longitude = MapDefaults.FortCollinsLongitude.ToString(CultureInfo.InvariantCulture);
+    private string radius = "50";
+    private IReadOnlyList<Course>? courses;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is not null)
+        {
+            var profile = await Api.ProfileAsync();
+            if (profile is not null)
+                Session.UpdateUser(profile);
+        }
+        var opening = MapDefaults.OpeningCenter(Session.User?.Latitude, Session.User?.Longitude);
+        latitude = opening.Latitude.ToString(CultureInfo.InvariantCulture);
+        longitude = opening.Longitude.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private async Task Search()
+    {
+        if (!double.TryParse(latitude, NumberStyles.Float, CultureInfo.InvariantCulture, out var lat)
+            || !double.TryParse(longitude, NumberStyles.Float, CultureInfo.InvariantCulture, out var lon)
+            || !double.TryParse(radius, NumberStyles.Float, CultureInfo.InvariantCulture, out var km))
+        {
+            courses = [];
+            return;
+        }
+        courses = await Api.PublishedAsync(lat, lon, km);
+    }
+}

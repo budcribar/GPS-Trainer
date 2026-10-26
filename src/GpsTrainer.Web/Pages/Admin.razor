@@ -1,0 +1,103 @@
+@page "/admin"
+@inject GpsApi Api
+@inject Session Session
+
+<PageTitle>Admin</PageTitle>
+<h1>Admin</h1>
+@if (Session.Login is null)
+{
+    <p>Sign in with an admin login.</p>
+}
+else if (users is null)
+{
+    <p>Loading…</p>
+}
+else if (users.Count == 0)
+{
+    <p>No accounts were returned for this login.</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>Login</th><th>Name</th><th>Active</th><th>Expires</th></tr></thead>
+        <tbody>
+        @foreach (var user in users)
+        {
+            <tr>
+                <td>@user.Login</td>
+                <td>@user.FirstName @user.LastName</td>
+                <td>@(user.IsActive ? "yes" : "no")</td>
+                <td>@user.ExpirationDate.ToString("d")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    @if (routing is not null)
+    {
+        <h2>Routing</h2>
+        <p>Road-following uses OpenRouteService on the HeiGIT host. The key stays on the server and is masked here. <code>Routing__OrsApiKey</code> and <code>ORS_API_KEY</code> are the default. A key typed below is stored encrypted and overrides the environment until you clear it. Set <code>Routing:SettingsProtectionKey</code> or <code>GpsTrainer:AuthSigningKey</code> so a stored key can be read after a restart. Directions, elevation, and geocoding use <code>Routing:DirectionsBaseUrl</code>, <code>Routing:ElevationBaseUrl</code>, and <code>Routing:GeocodeBaseUrl</code>. A leftover <code>Routing:BaseUrl</code> does not switch the host.</p>
+        <p>Provider @routing.Provider. Key @(routing.KeyConfigured ? routing.KeyMask : "not set") (@routing.KeySource).</p>
+        <div class="field">
+            <label>Provider</label>
+            <select @bind="provider">
+                @foreach (var name in routing.Providers)
+                {
+                    <option value="@name">@name</option>
+                }
+            </select>
+        </div>
+        <div class="field">
+            <label>New API key</label>
+            <input type="password" @bind="newKey" autocomplete="new-password" placeholder="Leave blank to keep the current key" />
+        </div>
+        <div class="field">
+            <label><input type="checkbox" @bind="clearKey" /> Clear the stored key and use the environment variable</label>
+        </div>
+        <button @onclick="SaveRouting">Save routing settings</button>
+        @if (!string.IsNullOrEmpty(routingMessage))
+        {
+            <p class="notice">@routingMessage</p>
+        }
+    }
+}
+
+@code {
+    private IReadOnlyList<UserProfileDto>? users;
+    private RoutingSettingsDto? routing;
+    private string provider = "OpenRouteService";
+    private string newKey = "";
+    private bool clearKey;
+    private string? routingMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is null)
+            return;
+        users = await Api.AdminUsersAsync();
+        if (users.Count == 0)
+            return;
+        routing = await Api.RoutingSettingsAsync();
+        if (routing is not null)
+            provider = routing.Provider;
+    }
+
+    private async Task SaveRouting()
+    {
+        var saved = await Api.SaveRoutingSettingsAsync(new RoutingSettingsWriteDto
+        {
+            Provider = provider,
+            ApiKey = clearKey ? null : newKey,
+            ClearStoredKey = clearKey
+        });
+        if (saved is null)
+        {
+            routingMessage = "Routing settings were not saved.";
+            return;
+        }
+        routing = saved;
+        provider = saved.Provider;
+        newKey = "";
+        clearKey = false;
+        routingMessage = "Routing settings saved.";
+    }
+}

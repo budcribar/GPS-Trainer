@@ -1,0 +1,28 @@
+header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.8rem 1.2rem;
+    background: #143d2c;
+    color: #f4f7f2;
+}
+
+nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    align-items: center;
+}
+
+nav a { color: #d7ecdf; }
+
+main { padding: 1rem 1.2rem 3rem; max-width: 960px; }
+
+.gap {
+    background: #f4efe2;
+    border: 1px solid #e0d3b0;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.92rem;
+}

@@ -1,0 +1,16 @@
+bin/
+obj/
+.vs/
+*.user
+*.db
+*.db-shm
+*.db-wal
+src/GpsTrainer.Server/data/
+TestResults/
+.dotnet/
+artifacts/
+*.apk
+*.aab
+*.ipa
+*.jks
+*.keystore

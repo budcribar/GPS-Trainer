@@ -1,0 +1,13 @@
+**/.git
+**/.vs
+**/bin
+**/obj
+**/*.user
+**/*.db
+**/*.db-shm
+**/*.db-wal
+tests
+src/GpsTrainer.App
+artifacts
+.dotnet
+global.json

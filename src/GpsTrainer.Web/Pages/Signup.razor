@@ -1,0 +1,198 @@
+@page "/signup"
+@inject GpsApi Api
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+
+<PageTitle>Sign up</PageTitle>
+<section class="signup">
+    <img class="signup-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+    <h1>Create your account</h1>
+    <p class="signup-lead">Use it on this site and in the phone app.</p>
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p class="signup-form-error" role="alert">@message</p>
+    }
+    <EditForm Model="form" OnValidSubmit="Submit" class="signup-form" novalidate>
+        <div class="signup-field">
+            <label for="signup-login">User name</label>
+            <AutofillInput Id="signup-login" @bind-Value="form.Login" Autocomplete="username" Autocapitalize="none" Spellcheck="false"
+                           AriaInvalid="@Invalid(loginError)" AriaDescribedBy="@DescribedBy(loginError, "signup-login-error")" />
+            @Error("signup-login-error", loginError)
+        </div>
+        <div class="signup-field">
+            <label for="signup-password">Password</label>
+            <div class="signup-password">
+                <AutofillInput Id="signup-password" Type="@(showPassword ? "text" : "password")" @bind-Value="form.Password" Autocomplete="new-password"
+                               AriaInvalid="@Invalid(passwordError)" AriaDescribedBy="@DescribedBy(passwordError, "signup-password-error")" />
+                <PasswordReveal CssClass="signup-reveal" Controls="signup-password" Pressed="showPassword" OnClick="TogglePassword" />
+            </div>
+            @Error("signup-password-error", passwordError)
+        </div>
+        <div class="signup-field">
+            <label for="signup-email">Email</label>
+            <AutofillInput Id="signup-email" Type="email" @bind-Value="form.Email" Autocomplete="email" Autocapitalize="none" Spellcheck="false"
+                           AriaInvalid="@Invalid(emailError)" AriaDescribedBy="@DescribedBy(emailError, "signup-email-error")" />
+            @Error("signup-email-error", emailError)
+        </div>
+        <div class="signup-field">
+            <label for="signup-first">First name</label>
+            <AutofillInput Id="signup-first" @bind-Value="form.FirstName" Autocomplete="given-name" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-last">Last name</label>
+            <AutofillInput Id="signup-last" @bind-Value="form.LastName" Autocomplete="family-name" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-phone">Phone</label>
+            <AutofillInput Id="signup-phone" Type="tel" @bind-Value="form.PhoneNumber" Autocomplete="tel" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-street">Street</label>
+            <AutofillInput Id="signup-street" @bind-Value="form.Street" Autocomplete="street-address" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-city">City</label>
+            <AutofillInput Id="signup-city" @bind-Value="form.City" Autocomplete="address-level2" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-state">State</label>
+            <AutofillInput Id="signup-state" @bind-Value="form.State" Autocomplete="address-level1" />
+        </div>
+        <div class="signup-field">
+            <label for="signup-country">Country</label>
+            <AutofillInput Id="signup-country" @bind-Value="form.Country" Autocomplete="country" />
+        </div>
+        <div class="signup-field signup-check">
+            <input id="signup-male" type="checkbox" @bind="form.IsMale" />
+            <label for="signup-male">Male</label>
+        </div>
+        <div class="signup-field signup-check">
+            <input id="signup-mail" type="checkbox" @bind="form.WantsEmails" />
+            <label for="signup-mail">Enable email messages</label>
+        </div>
+        <button type="submit" class="signup-submit">Create account</button>
+    </EditForm>
+    <p class="signup-switch">Already registered? <a href="login">Sign in</a></p>
+</section>
+
+@code {
+    private readonly UserWriteDto form = new() { Country = "US", WantsEmails = true, IsMale = true };
+    private string? message;
+    private string? loginError;
+    private string? passwordError;
+    private string? emailError;
+    private bool showPassword;
+
+    private async Task Submit()
+    {
+        await AdoptAsync();
+        loginError = passwordError = emailError = message = null;
+        var blocked = false;
+        if (string.IsNullOrWhiteSpace(form.Login))
+        {
+            loginError = "Enter a user name.";
+            blocked = true;
+        }
+        if (string.IsNullOrWhiteSpace(form.Password))
+        {
+            passwordError = "Enter a password.";
+            blocked = true;
+        }
+        if (!EmailValidator.Validate(form.Email))
+        {
+            emailError = "Enter a valid email address.";
+            blocked = true;
+        }
+        if (blocked)
+            return;
+
+        var result = await Api.SignUpAsync(form);
+        switch (result)
+        {
+            case "ok":
+                message = "Account created. Sign in on this site or in the phone app.";
+                Nav.NavigateTo("login");
+                break;
+            case "DuplicateUserName":
+                loginError = "That user name is already registered.";
+                break;
+            case "DuplicateEmail":
+                emailError = "That email is already registered.";
+                break;
+            case "MissingLogin":
+                loginError = "Enter a user name.";
+                passwordError = "Enter a password.";
+                break;
+            default:
+                message = result;
+                break;
+        }
+    }
+
+    private void TogglePassword()
+    {
+        Adopt();
+        showPassword = !showPassword;
+    }
+
+    private static readonly string[] Fields =
+    [
+        "signup-login", "signup-password", "signup-email", "signup-first", "signup-last",
+        "signup-phone", "signup-street", "signup-city", "signup-state", "signup-country"
+    ];
+
+    private void Adopt()
+    {
+        foreach (var id in Fields)
+            FieldValues.CopyDom(Js, id, Current(id), value => Assign(id, value));
+    }
+
+    private Task AdoptAsync() => FieldValues.CopyAllAsync(Js, Fields, Current, Assign);
+
+    private string Current(string id) => id switch
+    {
+        "signup-password" => form.Password,
+        "signup-email" => form.Email,
+        "signup-first" => form.FirstName,
+        "signup-last" => form.LastName,
+        "signup-phone" => form.PhoneNumber,
+        "signup-street" => form.Street,
+        "signup-city" => form.City,
+        "signup-state" => form.State,
+        "signup-country" => form.Country,
+        _ => form.Login
+    };
+
+    private void Assign(string id, string value)
+    {
+        switch (id)
+        {
+            case "signup-password": form.Password = value; break;
+            case "signup-email": form.Email = value; break;
+            case "signup-first": form.FirstName = value; break;
+            case "signup-last": form.LastName = value; break;
+            case "signup-phone": form.PhoneNumber = value; break;
+            case "signup-street": form.Street = value; break;
+            case "signup-city": form.City = value; break;
+            case "signup-state": form.State = value; break;
+            case "signup-country": form.Country = value; break;
+            default: form.Login = value; break;
+        }
+    }
+
+    private static string? Invalid(string? error) => error is null ? null : "true";
+
+    private static string? DescribedBy(string? error, string id) => error is null ? null : id;
+
+    private RenderFragment Error(string id, string? text) => builder =>
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+        builder.OpenElement(0, "p");
+        builder.AddAttribute(1, "id", id);
+        builder.AddAttribute(2, "class", "signup-error");
+        builder.AddAttribute(3, "role", "alert");
+        builder.AddContent(4, text);
+        builder.CloseElement();
+    };
+}

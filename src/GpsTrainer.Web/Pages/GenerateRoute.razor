@@ -1,0 +1,218 @@
+@page "/generate"
+@inject GpsApi Api
+@inject Session Session
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<PageTitle>Generate route</PageTitle>
+<h1>Generate route</h1>
+<p>Fort Collins cycling loops. Paved trails such as the Poudre River Trail and Spring Creek Trail come first. Bike-lane loops use on-road lanes. Trail corridors © COTREX / Colorado Parks and Wildlife. Bike lanes © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors (ODbL).</p>
+<p>Sign in before generating if you want elevation, summit pins, and road snapping. The loop still draws without an account. Nothing is saved until you save it in the editor.</p>
+
+<div class="generate-form">
+    <label>Start latitude
+        <input type="number" step="0.0001" @bind="latitude" />
+    </label>
+    <label>Start longitude
+        <input type="number" step="0.0001" @bind="longitude" />
+    </label>
+    <label>Distance
+        <input type="number" min="2" max="65" step="0.5" @bind="distance" />
+    </label>
+    <label>Unit
+        <select @bind="unit">
+            <option value="mi">miles</option>
+            <option value="km">km</option>
+        </select>
+    </label>
+    <label>Climbing
+        <select @bind="climbing">
+            <option value="flat">flat</option>
+            <option value="moderate">moderate</option>
+            <option value="hilly">hilly</option>
+        </select>
+    </label>
+    <label>Type
+        <select @bind="routeType">
+            <option value="trail">trail-first</option>
+            <option value="lane">bike lanes</option>
+        </select>
+    </label>
+    <button type="button" @onclick="Generate" disabled="@busy">Generate</button>
+</div>
+<p>Click the map to move the start. @(usingSavedHome ? "The start is your saved map location." : "The default is downtown Fort Collins.")</p>
+<div id="generate-map"></div>
+<p class="map-credit">© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Trail corridors © COTREX / Colorado Parks and Wildlife.</p>
+@if (!string.IsNullOrEmpty(message))
+{
+    <p class="notice">@message</p>
+}
+@if (!string.IsNullOrEmpty(attribution))
+{
+    <p>@attribution</p>
+}
+@foreach (var candidate in candidates)
+{
+    <div class="loop-card" style="@($"border-left-color:{candidate.Color}")">
+        <strong>@candidate.Name</strong>
+        <p>@FormatDistance(candidate.DistanceMeters) · @FormatClimb(candidate.ClimbingMeters, candidate.ElevationKnown) · @Percent(candidate.BikeLegalShare) on bike paths · @Percent(candidate.TrailShare) trail · @Percent(candidate.LaneShare) bike lane</p>
+        <button type="button" @onclick="() => Open(candidate)">Open in editor</button>
+    </div>
+}
+
+@code {
+    private static readonly string[] Colors = ["#1d4e89", "#1b7f3a", "#8b1e3f"];
+    private double latitude = MapDefaults.FortCollinsLatitude;
+    private double longitude = MapDefaults.FortCollinsLongitude;
+    private bool usingSavedHome;
+    private double distance = 12;
+    private string unit = "mi";
+    private string climbing = "flat";
+    private string routeType = "trail";
+    private string? message;
+    private string? attribution;
+    private bool busy;
+    private bool mapReady;
+    private List<ShownLoop> candidates = [];
+    private DotNetObjectReference<GenerateRoute>? self;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is not null)
+        {
+            var profile = await Api.ProfileAsync();
+            if (profile is not null)
+                Session.UpdateUser(profile);
+        }
+        var opening = MapDefaults.OpeningCenter(Session.User?.Latitude, Session.User?.Longitude);
+        latitude = opening.Latitude;
+        longitude = opening.Longitude;
+        usingSavedHome = Session.User?.Latitude is double lat
+            && Session.User.Longitude is double lon
+            && RoutingLimits.IsPosition(lat, lon);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+        self = DotNetObjectReference.Create(this);
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerRouteGenerator.mount", "#generate-map", latitude, longitude, self);
+            mapReady = true;
+        }
+        catch (JSException)
+        {
+            message = "The map is not ready.";
+        }
+    }
+
+    [JSInvokable]
+    public void SetStart(double lat, double lon)
+    {
+        latitude = Math.Round(lat, 5);
+        longitude = Math.Round(lon, 5);
+        StateHasChanged();
+    }
+
+    private async Task Generate()
+    {
+        busy = true;
+        message = "Looking for loops…";
+        candidates = [];
+        try
+        {
+            var response = await Api.GenerateLoopsAsync(new LoopGenerateRequestDto
+            {
+                Latitude = latitude,
+                Longitude = longitude,
+                Distance = distance,
+                Unit = unit,
+                Climbing = climbing,
+                Type = routeType
+            });
+            attribution = response.Attribution;
+            message = response.Message;
+            candidates = response.Candidates.Select((candidate, index) => new ShownLoop(candidate, Colors[index % Colors.Length])).ToList();
+            if (mapReady)
+            {
+                await Js.InvokeVoidAsync("gpsTrainerRouteGenerator.show", candidates.Select(candidate => new
+                {
+                    color = candidate.Color,
+                    points = candidate.Line.Select(point => new[] { point[0], point[1] }).ToList()
+                }));
+                await Js.InvokeVoidAsync("gpsTrainerRouteGenerator.setStart", latitude, longitude);
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Open(ShownLoop candidate)
+    {
+        var course = new Course
+        {
+            Name = candidate.Name,
+            Comments = candidate.Comments,
+            City = candidate.City,
+            State = candidate.State,
+            ElapsedDistanceKm = candidate.Waypoints.Count == 0 ? 0 : candidate.Waypoints[^1].ElapsedDistanceKm,
+            AltitudeGainKm = candidate.AltitudeGainKm,
+            AltitudeLossKm = candidate.AltitudeLossKm
+        };
+        GeneratedCourseDraft.Store(course, candidate.Waypoints);
+        Nav.NavigateTo("editor");
+    }
+
+    private string FormatDistance(double meters)
+    {
+        if (unit == "km")
+            return (meters / 1000.0).ToString("0.0") + " km";
+        return (meters / Distance.MetersPerStatuteMile).ToString("0.0") + " mi";
+    }
+
+    private static string FormatClimb(double meters, bool known)
+    {
+        if (!known)
+            return "climbing unknown";
+        var feet = meters / 0.3048;
+        return feet.ToString("0") + " ft climbing";
+    }
+
+    private static string Percent(double share) => (share * 100).ToString("0") + "%";
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerRouteGenerator.unmount");
+        }
+        catch (JSException)
+        {
+        }
+        self?.Dispose();
+    }
+
+    private sealed class ShownLoop(LoopCandidateDto source, string color)
+    {
+        public string Name { get; } = source.Name;
+        public string Comments { get; } = source.Comments;
+        public string City { get; } = source.City;
+        public string State { get; } = source.State;
+        public double DistanceMeters { get; } = source.DistanceMeters;
+        public double ClimbingMeters { get; } = source.ClimbingMeters;
+        public double AltitudeGainKm { get; } = source.AltitudeGainKm;
+        public double AltitudeLossKm { get; } = source.AltitudeLossKm;
+        public double BikeLegalShare { get; } = source.BikeLegalShare;
+        public double TrailShare { get; } = source.TrailShare;
+        public double LaneShare { get; } = source.LaneShare;
+        public bool ElevationKnown { get; } = source.ElevationKnown;
+        public string Color { get; } = color;
+        public List<double[]> Line { get; } = source.Line;
+        public List<Waypoint> Waypoints { get; } = source.Waypoints;
+    }
+}

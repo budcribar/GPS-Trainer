@@ -1,0 +1,123 @@
+@page "/login"
+@inject GpsApi Api
+@inject Session Session
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+
+<PageTitle>Sign in</PageTitle>
+<section class="signin">
+    <img class="signin-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+    <h1>Sign in</h1>
+    <p class="signin-lead">Use the same account on this site and in the phone app.</p>
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p id="signin-form-error" class="signin-form-error" role="alert">@message</p>
+    }
+    <EditForm Model="form" OnValidSubmit="Submit" class="signin-form" novalidate>
+        <div class="signin-field">
+            <label for="signin-login">User name</label>
+            <AutofillInput Id="signin-login" @bind-Value="form.Login" Autocomplete="username" Autocapitalize="none" Spellcheck="false"
+                           AriaInvalid="@Invalid(loginError ?? credentialError)" AriaDescribedBy="@DescribedBy(loginError ?? credentialError, loginError is null ? "signin-form-error" : "signin-login-error")" />
+            @Error("signin-login-error", loginError)
+        </div>
+        <div class="signin-field">
+            <label for="signin-password">Password</label>
+            <div class="signin-password">
+                <AutofillInput Id="signin-password" Type="@(showPassword ? "text" : "password")" @bind-Value="form.Password" Autocomplete="current-password"
+                               AriaInvalid="@Invalid(passwordError ?? credentialError)" AriaDescribedBy="@DescribedBy(passwordError ?? credentialError, passwordError is null ? "signin-form-error" : "signin-password-error")" />
+                <PasswordReveal CssClass="signin-reveal" Controls="signin-password" Pressed="showPassword" OnClick="TogglePassword" />
+            </div>
+            @Error("signin-password-error", passwordError)
+        </div>
+        <button type="submit" class="signin-submit">Sign in</button>
+    </EditForm>
+    <p class="signin-switch"><a href="forgot">Forgot password</a></p>
+    <p class="signin-switch">Need an account? <a href="signup">Sign up</a></p>
+    @if (Session.Login is not null)
+    {
+        <p class="signin-signed">Signed in as @Session.Login. <button type="button" @onclick="SignOut">Sign out</button></p>
+    }
+</section>
+
+@code {
+    private readonly LoginRequest form = new();
+    private string? message;
+    private string? loginError;
+    private string? passwordError;
+    private string? credentialError;
+    private bool showPassword;
+
+    private async Task Submit()
+    {
+        await AdoptAsync();
+        loginError = passwordError = credentialError = message = null;
+        var blocked = false;
+        if (string.IsNullOrWhiteSpace(form.Login))
+        {
+            loginError = "Enter a user name.";
+            blocked = true;
+        }
+        if (string.IsNullOrWhiteSpace(form.Password))
+        {
+            passwordError = "Enter a password.";
+            blocked = true;
+        }
+        if (blocked)
+            return;
+
+        var result = await Api.LoginAsync(form.Login, form.Password);
+        if (result is null)
+        {
+            credentialError = message = "The user name or password is incorrect.";
+            return;
+        }
+        Nav.NavigateTo("courses");
+    }
+
+    private async Task SignOut()
+    {
+        await Api.LogoutAsync();
+        loginError = passwordError = credentialError = null;
+        message = "Signed out.";
+    }
+
+    private void TogglePassword()
+    {
+        Adopt();
+        showPassword = !showPassword;
+    }
+
+    private void Adopt()
+    {
+        FieldValues.CopyDom(Js, "signin-login", form.Login, value => form.Login = value);
+        FieldValues.CopyDom(Js, "signin-password", form.Password, value => form.Password = value);
+    }
+
+    private Task AdoptAsync() => FieldValues.CopyAllAsync(
+        Js,
+        ["signin-login", "signin-password"],
+        id => id == "signin-password" ? form.Password : form.Login,
+        (id, value) =>
+        {
+            if (id == "signin-password")
+                form.Password = value;
+            else
+                form.Login = value;
+        });
+
+    private static string? Invalid(string? error) => string.IsNullOrEmpty(error) ? null : "true";
+
+    private static string? DescribedBy(string? error, string id) => string.IsNullOrEmpty(error) ? null : id;
+
+    private RenderFragment Error(string id, string? text) => builder =>
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+        builder.OpenElement(0, "p");
+        builder.AddAttribute(1, "id", id);
+        builder.AddAttribute(2, "class", "signin-error");
+        builder.AddAttribute(3, "role", "alert");
+        builder.AddContent(4, text);
+        builder.CloseElement();
+    };
+}

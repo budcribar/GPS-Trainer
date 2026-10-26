@@ -1,0 +1,1257 @@
+@page "/editor"
+@page "/editor/{CourseId:guid}"
+@using GeoCoord = GpsTrainer.Web.Maps.GeoCoord
+@inject IJSRuntime Js
+@inject ICourseMap Map
+@inject GpsApi Api
+@inject Session Session
+@implements IAsyncDisposable
+
+<PageTitle>COURSE</PageTitle>
+<div class="editor-shell">
+<div class="editor-bar">
+    <SiteBrand ExtraClass="editor-brand" />
+    <div class="editor-find">
+        <button type="button" @onclick="ZoomToAddress">Zoom To</button>
+        <input @bind="zoomAddress" maxlength="50" aria-label="Zoom to" />
+    </div>
+</div>
+<nav class="editor-menu" aria-label="Editor">
+    <button type="button" @onclick="ToggleCourse">COURSE</button>
+    <button type="button" @onclick="ToggleProfile">PROFILE</button>
+    <span class="editor-menu-gap"></span>
+    <button type="button" @onclick="ToggleHelp">HELP</button>
+    <a href="about">ABOUT</a>
+</nav>
+@if (Session.Login is null)
+{
+    <p class="editor-signin">Sign in before saving.</p>
+}
+<div class="editor-columns">
+    <div class="editor-map-column">
+        <div id="course-map" class="course-map-fill"></div>
+        @if (ShowProfile)
+        {
+            <div id="PanelProfile" class="profile-panel profile-below">
+                <div class="profile-panel-header">
+                    <span>PROFILE</span>
+                    <button type="button" @onclick="CloseProfile" aria-label="Close profile">X</button>
+                </div>
+                <p class="profile-summary">Climb/descent @Chart.ClimbDescent</p>
+                <div class="profile-chart" @onclick="OpenProfileMenu" @oncontextmenu="OpenProfileMenu" @oncontextmenu:preventDefault="true">
+                @if (!Chart.HasElevation)
+                {
+                    <p>No elevation on this course yet. A road route fills the profile from OpenRouteService.</p>
+                }
+                else
+                {
+                    <svg id="course-profile" viewBox="0 0 760 230" role="img" aria-label="@Chart.Title" @onmousemove="ProfileHover" @onmousemove:stopPropagation="true">
+                        <rect x="0" y="0" width="760" height="230" fill="transparent" />
+                        <text x="380" y="18" text-anchor="middle" fill="#585880" font-size="14">@Chart.Title</text>
+                        <text x="16" y="120" fill="#585880" font-size="13" font-weight="700" transform="rotate(-90 16 120)">@Chart.AltitudeAxis</text>
+                        <text x="400" y="226" text-anchor="middle" fill="#585880" font-size="13" font-weight="700">@Chart.DistanceAxis</text>
+                        <polyline points="@Chart.Line" fill="none" stroke="#585880" stroke-width="2" />
+                        @foreach (var mark in Chart.Marks)
+                        {
+                            <circle cx="@mark.X.ToString(System.Globalization.CultureInfo.InvariantCulture)" cy="@mark.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)" r="4" fill="@mark.Color" stroke="#585880" stroke-width="1">
+                                <title>@mark.Label</title>
+                            </circle>
+                        }
+                        <text x="68" y="210" fill="#585880" font-size="11">@Chart.MinDistance</text>
+                        <text x="742" y="210" text-anchor="end" fill="#585880" font-size="11">@Chart.MaxDistance</text>
+                        <text x="64" y="40" text-anchor="end" fill="#585880" font-size="11">@Chart.MaxAltitude</text>
+                        <text x="64" y="196" text-anchor="end" fill="#585880" font-size="11">@Chart.MinAltitude</text>
+                    </svg>
+                    <p class="profile-hover">@hover</p>
+                }
+                </div>
+            </div>
+        }
+        <p class="map-credit">© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, directions and elevation from <a href="https://openrouteservice.org/">openrouteservice</a> by <a href="https://heigit.org/">HeiGIT</a>.</p>
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <p class="notice">@message</p>
+        }
+        <div class="gpx-tools">
+            <button type="button" @onclick="UndoLastSegment" disabled="@(!sketch.CanUndo)">Undo last segment</button>
+            @if (course.CourseId != Guid.Empty)
+            {
+                <a href="@($"intervals/{course.CourseId}")">Interval times</a>
+            }
+            <button type="button" @onclick="ExportGpx">Download GPX</button>
+            <button type="button" @onclick="ShowImport">Import GPX</button>
+        </div>
+        @if (importOpen)
+        {
+            <div class="field">
+                <label>Tolerance</label>
+                <input type="number" @bind="toleranceMeters" min="5" max="15" />
+                <span>meters</span>
+                <InputFile OnChange="ImportGpx" accept=".gpx,application/gpx+xml,text/xml" />
+            </div>
+        }
+    </div>
+</div>
+@if (showCourse)
+{
+                <div id="PanelDetails" class="details-panel editor-dialog" data-dialog="course" style="@DialogStyle(courseLeft, courseTop)">
+                    <div class="details-header editor-dialog-header">
+                        <span>COURSE</span>
+                        <button type="button" @onclick="CloseCourse" aria-label="Close course">X</button>
+                    </div>
+                    <div class="details-body">
+                        <div class="detail-row"><label>Name:</label><input @bind="course.Name" /></div>
+                        <div class="detail-row">
+                            <label>Distance:</label>
+                            <span class="distance-readout">@DistanceText <button type="button" class="units-button" @onclick="ToggleUnits">@UnitsButtonLabel</button></span>
+                        </div>
+                        <div class="detail-row"><label>Altitude Gain/Loss:</label><span>@GainLossText</span></div>
+                        <div class="detail-row"><label>Comments:</label><textarea rows="9" @bind="course.Comments"></textarea></div>
+                        <div class="detail-row"><label>Publish</label><input type="checkbox" @bind="course.Publish" /></div>
+                        <div class="detail-row">
+                            <label>Activity:</label>
+                            <select @bind="course.ActivityCode">
+                                @foreach (var activity in activities)
+                                {
+                                    <option value="@activity.ActKey">@activity.ActValue</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="detail-row">
+                            <label>Fitness Level:</label>
+                            <select @bind="course.Difficulty">
+                                <option value="0">Beginner</option>
+                                <option value="1">Intermediate</option>
+                                <option value="2">Advanced</option>
+                                <option value="3">Elite</option>
+                            </select>
+                        </div>
+                        <div class="detail-row"><label>GoalTime</label><input @bind="goalTime" /></div>
+                        <button type="button" class="save-button" @onclick="Save">Save</button>
+                    </div>
+                </div>
+}
+@if (showHelp)
+{
+                <div id="HelpPanel" class="help-panel editor-dialog" data-dialog="help" style="@DialogStyle(helpLeft, helpTop)">
+                    <div class="details-header editor-dialog-header">
+                        <span>HELP</span>
+                        <button type="button" @onclick="CloseHelp" aria-label="Close help">X</button>
+                    </div>
+                    <div class="help-body">
+                        <b>Pan and Zoom Map</b>
+                        <ul>
+                            <li>Hold mouse button and drag mouse to pan</li>
+                            <li>Use mouse wheel or +- keys to zoom</li>
+                        </ul>
+                        <b>Define a road course</b>
+                        <ul>
+                            <li>Left Click along route</li>
+                            <li>Click Save</li>
+                        </ul>
+                        <b>Undo</b>
+                        <ul>
+                            <li>Ctrl-Z will undo the last edit</li>
+                        </ul>
+                        <b>Move Waypoint</b>
+                        <ul>
+                            <li>Left Click to Select and Drag Waypoint to new location</li>
+                        </ul>
+                        <b>Delete Waypoint</b>
+                        <ul>
+                            <li>Right Click to select marker</li>
+                            <li>Hit DELETE Key</li>
+                        </ul>
+                        <b>Define Standard Interval</b>
+                        <ul>
+                            <li>Right Click-&gt;Interval-&gt;100m</li>
+                        </ul>
+                        <p>The first point is the start. Later clicks follow roads. If the road route cannot be found, a straight segment is added and a short message says why. Right-click the map for CONTINUE, ROUTE, TURN RIGHT, TURN LEFT, FINISH, ZOOM, and MOVE. ROUTE follows the roads. With two or more points, FINISH next to the start closes the loop. The Undo button does the same as Ctrl-Z. Turn and announcement markers open a text box on the map. Zoom To finds an address. Saving stores the fitness level and creates a goal-time race. The profile sits under the map once the course has distance. Click or right-click the chart to place an interval, turn around, feed zone, summit, or announcement.</p>
+                        <a href="help">Check out the training videos</a>
+                    </div>
+                </div>
+}
+</div>
+@code {
+    [Parameter] public Guid CourseId { get; set; }
+    private readonly CourseSketch sketch = new();
+    private List<Waypoint> waypoints => sketch.Waypoints;
+    private Course course = new();
+    private List<ActivityCode> activities = [];
+    private string? message;
+    private string goalTime = "00:00:35";
+    private string zoomAddress = "";
+    private double centerLat = MapDefaults.FortCollinsLatitude;
+    private double centerLon = MapDefaults.FortCollinsLongitude;
+    private bool metric = ElevationUnits.MetricByDefault;
+    private double toleranceMeters = GpxCourse.DefaultToleranceMeters;
+    private bool creating = true;
+    private bool profileOpen = true;
+    private bool showCourse = true;
+    private bool showHelp = true;
+    private bool importOpen;
+    private string hover = "";
+    private bool fitMap;
+    private bool mapReady;
+    private bool placeDialogs;
+    private bool profilePlaced;
+    private double? courseLeft;
+    private double? courseTop;
+    private double? helpLeft;
+    private double? helpTop;
+    private Guid? shownCourseId;
+    private bool mapEventsHooked;
+    private DotNetObjectReference<CourseEditor>? self;
+
+    private static string? DialogStyle(double? left, double? top) =>
+        left is double x && top is double y
+            ? FormattableString.Invariant($"left:{x:0.###}px;top:{y:0.###}px;right:auto;bottom:auto;")
+            : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        HookMap();
+        activities = (await Api.ActivitiesAsync()).ToList();
+        if (Session.Login is not null)
+        {
+            var profile = await Api.ProfileAsync();
+            if (profile is not null)
+                Session.UpdateUser(profile);
+        }
+    }
+
+    /// <summary>
+    /// /editor and /editor/{id} are the same component. Blazor keeps it alive when the
+    /// id changes, so the course has to be loaded here and drawn on the map already mounted.
+    /// </summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (shownCourseId == CourseId)
+            return;
+        if (shownCourseId == Guid.Empty)
+            await RememberDraft(Guid.Empty);
+        shownCourseId = CourseId;
+        await LoadShownCourse();
+        if (mapReady)
+            await RedrawShownCourse();
+    }
+
+    private async Task LoadShownCourse()
+    {
+        course = new Course();
+        sketch.Replace([]);
+        message = null;
+        goalTime = "00:00:35";
+        hover = "";
+        importOpen = false;
+        creating = CourseId == Guid.Empty;
+        if (CourseId == Guid.Empty)
+        {
+            var cycling = activities.FirstOrDefault(activity =>
+                string.Equals(activity.ActValue, "Cycling", StringComparison.OrdinalIgnoreCase));
+            if (cycling is not null)
+                course.ActivityCode = cycling.ActKey;
+            if (GeneratedCourseDraft.TryTake(out var drafted, out var draftedWaypoints))
+            {
+                var activity = course.ActivityCode;
+                course = drafted;
+                if (activity != 0)
+                    course.ActivityCode = activity;
+                sketch.Replace(draftedWaypoints);
+                message = "Generated route. Save the course if you want to keep it.";
+            }
+            else
+                await LoadDraft();
+        }
+        else
+        {
+            course = await Api.CourseAsync(CourseId) ?? new Course { CourseId = CourseId };
+            sketch.Replace((await Api.WaypointsAsync(CourseId)).ToList());
+            if (course.Difficulty is < 0 or > 3)
+                course.Difficulty = 0;
+        }
+        ChooseOpeningCenter();
+        SyncElevation();
+    }
+
+    /// <summary>
+    /// A course with points keeps the view on that course. An empty editor uses the saved home, or Fort Collins.
+    /// </summary>
+    private void ChooseOpeningCenter()
+    {
+        var first = waypoints.FirstOrDefault();
+        if (first is not null)
+        {
+            centerLat = first.Latitude;
+            centerLon = first.Longitude;
+            return;
+        }
+        var opening = MapDefaults.OpeningCenter(Session.User?.Latitude, Session.User?.Longitude);
+        centerLat = opening.Latitude;
+        centerLon = opening.Longitude;
+    }
+
+    private async Task RedrawShownCourse()
+    {
+        fitMap = true;
+        await RefreshMap();
+        try
+        {
+            await Map.SetViewAsync(new GeoCoord(centerLat, centerLon));
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+            var stored = await Map.ReadElevationUnitsAsync(
+                string.IsNullOrWhiteSpace(Session.Login) ? "" : ElevationUnits.StorageKey(Session.Login),
+                ElevationUnits.StorageKey(null));
+            metric = ElevationUnits.IsMetric(stored);
+            profileOpen = await Map.ReadShowProfileAsync();
+            }
+            catch (JSException)
+            {
+            }
+        self = DotNetObjectReference.Create(this);
+        await Map.MountAsync("#course-map", Frame());
+        mapReady = true;
+            try
+            {
+                await Js.InvokeVoidAsync("gpsTrainerDialogs.watch", self);
+            }
+            catch (JSException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            placeDialogs = showCourse || showHelp;
+            if (metric)
+                StateHasChanged();
+            await FitMap();
+        }
+        else if (fitMap)
+        {
+            fitMap = false;
+            await FitMap();
+        }
+
+        if (ShowProfile != profilePlaced)
+        {
+            profilePlaced = ShowProfile;
+            if (showHelp)
+                placeDialogs = true;
+        }
+
+        if (placeDialogs)
+        {
+            placeDialogs = false;
+            await PlaceDialogs();
+        }
+    }
+
+    private async Task PlaceDialogs()
+    {
+        if (showCourse)
+            await PlaceOne(course: true);
+        if (showHelp)
+            await PlaceOne(course: false);
+        StateHasChanged();
+    }
+
+    private async Task PlaceOne(bool course)
+    {
+        var size = await MeasureDialog(course ? "PanelDetails" : "HelpPanel");
+        DialogSpot? saved = null;
+        try
+        {
+            var json = await Js.InvokeAsync<string?>(
+                "gpsTrainerDialogs.load",
+                course ? EditorDialogLayout.CourseKey : EditorDialogLayout.HelpKey);
+            if (EditorDialogLayout.TryParse(json, out var spot))
+                saved = spot;
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        var placed = EditorDialogLayout.Place(
+            saved,
+            course,
+            size.ViewportWidth,
+            size.ViewportHeight,
+            size.Width,
+            size.Height,
+            course ? null : size.Blocked);
+        if (!course && saved is not null
+            && (EditorDialogLayout.IsOffScreen(saved, size.ViewportWidth, size.ViewportHeight, size.Width, size.Height)
+                || EditorDialogLayout.Hits(saved, size.Width, size.Height, size.Blocked)))
+        {
+            try
+            {
+                await Js.InvokeVoidAsync(
+                    "gpsTrainerDialogs.save",
+                    EditorDialogLayout.HelpKey,
+                    EditorDialogLayout.Serialize(placed.Left, placed.Top));
+            }
+            catch (JSException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+        if (course)
+        {
+            courseLeft = placed.Left;
+            courseTop = placed.Top;
+        }
+        else
+        {
+            helpLeft = placed.Left;
+            helpTop = placed.Top;
+        }
+    }
+
+    private async Task<DialogSize> MeasureDialog(string id)
+    {
+        try
+        {
+            var size = await Js.InvokeAsync<DialogSize?>("gpsTrainerDialogs.measure", id);
+            if (size is { Width: > 0, Height: > 0, ViewportWidth: > 0, ViewportHeight: > 0 })
+                return size;
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        return new DialogSize { Width = 320, Height = 360, ViewportWidth = 1280, ViewportHeight = 800 };
+    }
+
+    [JSInvokable]
+    public async Task RememberDialog(string name, double left, double top)
+    {
+        var course = string.Equals(name, "course", StringComparison.OrdinalIgnoreCase);
+        if (!course)
+        {
+            var size = await MeasureDialog("HelpPanel");
+            var dropped = new DialogSpot { Left = left, Top = top };
+            if (EditorDialogLayout.IsOffScreen(dropped, size.ViewportWidth, size.ViewportHeight, size.Width, size.Height)
+                || EditorDialogLayout.Hits(dropped, size.Width, size.Height, size.Blocked))
+            {
+                var placed = EditorDialogLayout.Place(
+                    dropped,
+                    course: false,
+                    size.ViewportWidth,
+                    size.ViewportHeight,
+                    size.Width,
+                    size.Height,
+                    size.Blocked);
+                left = placed.Left;
+                top = placed.Top;
+            }
+        }
+        if (course)
+        {
+            courseLeft = left;
+            courseTop = top;
+        }
+        else
+        {
+            helpLeft = left;
+            helpTop = top;
+        }
+        try
+        {
+            await Js.InvokeVoidAsync(
+                "gpsTrainerDialogs.save",
+                course ? EditorDialogLayout.CourseKey : EditorDialogLayout.HelpKey,
+                EditorDialogLayout.Serialize(left, top));
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public Task ReflowDialogs()
+    {
+        placeDialogs = showCourse || showHelp;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task FitMap()
+    {
+        try
+        {
+            await Map.FitAsync();
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private string ActivityName() =>
+        activities.FirstOrDefault(activity => activity.ActKey == course.ActivityCode)?.ActValue ?? "";
+
+    private ProfilePlot Chart => ElevationProfile.Plot(waypoints, metric, course.Name);
+
+    private string DistanceText => ElevationUnits.FormatDistance(CourseEdits.LengthKm(waypoints), metric);
+
+    private string GainLossText => ElevationProfile.ClimbDescent(course.AltitudeGainKm, course.AltitudeLossKm, metric);
+
+    private string UnitsButtonLabel => ElevationUnits.SwitchLabel(metric);
+
+    private Task ToggleUnits() => SetUnits(!metric);
+
+    private void ToggleCourse()
+    {
+        showCourse = !showCourse;
+        if (showCourse)
+            placeDialogs = true;
+    }
+
+    private void CloseCourse() => showCourse = false;
+
+    private void ToggleHelp()
+    {
+        showHelp = !showHelp;
+        if (showHelp)
+            placeDialogs = true;
+    }
+
+    private void CloseHelp() => showHelp = false;
+
+    private void ShowImport() => importOpen = true;
+
+    private async Task SetUnits(bool useMetric)
+    {
+        if (metric == useMetric)
+            return;
+        metric = useMetric;
+        try
+        {
+            await Map.RememberElevationUnitsAsync(
+                ElevationUnits.StorageKey(Session.Login),
+                useMetric ? ElevationUnits.Metric : ElevationUnits.English);
+        }
+        catch (JSException)
+        {
+        }
+        await RefreshMap();
+    }
+
+    public Task AddWaypoint(double latitude, double longitude)
+    {
+        var type = waypoints.Count == 0 ? WaypointType.Start : WaypointType.Continue;
+        return AddAt(latitude, longitude, type);
+    }
+
+    public Task InsertWaypoint(string typeName, double latitude, double longitude, bool route)
+    {
+        WaypointType type;
+        if (waypoints.Count == 0)
+            type = WaypointType.Start;
+        else if (!Enum.TryParse(typeName, ignoreCase: true, out type) || type is WaypointType.BearLeft or WaypointType.BearRight)
+            type = WaypointType.Continue;
+        // Left clicks and every menu row follow roads, including the ROUTE row.
+        _ = route;
+        return AddAt(latitude, longitude, type, true);
+    }
+
+    public async Task SetWaypointText(int index, string text)
+    {
+        if ((uint)index >= (uint)waypoints.Count)
+        {
+            message = "That waypoint is not on the course.";
+            return;
+        }
+        waypoints[index].TextDescription = text ?? "";
+        message = "Turn text saved with the marker. Save the course to keep it.";
+        await RefreshMap();
+    }
+
+    public Task PlaceSummit(int index)
+    {
+        if ((uint)index >= (uint)waypoints.Count)
+        {
+            message = "That waypoint is not on the course.";
+            return Task.CompletedTask;
+        }
+        var pin = waypoints[index];
+        return PlaceSummitAt(pin.Latitude, pin.Longitude);
+    }
+
+    public async Task PlaceSummitAt(double latitude, double longitude)
+    {
+        CourseEdits.StampRoute(waypoints);
+        var route = waypoints.Where(point => !CourseEdits.IsInterval(point)).ToList();
+        if (route.Count < 2 || route[^1].ElapsedDistanceKm <= 0)
+        {
+            message = "Course is too short to add a summit.";
+            StateHasChanged();
+            return;
+        }
+
+        var click = IntervalCourse.Nearest(route, latitude, longitude);
+        var hit = await SummitSearch.FindAsync(click.ElapsedKm, route[^1].ElapsedDistanceKm, elapsed => MeasureElevations(route, elapsed));
+        if (hit is null || !SummitSearch.IsKnown(hit.AltitudeKm))
+        {
+            message = "No elevation was found for a summit on this course.";
+            StateHasChanged();
+            return;
+        }
+
+        var point = SummitSearch.PointAt(route, hit.ElapsedKm);
+        var edit = sketch.InsertSummit(point.Latitude, point.Longitude, hit.ElapsedKm, hit.AltitudeKm);
+        message = edit.Ok
+            ? "Summit placed at the high point. Save the course to keep it."
+            : edit.Message ?? "No elevation was found for a summit on this course.";
+        await RefreshMap();
+    }
+
+    private bool ShowProfile => profileOpen && CourseEdits.LengthKm(waypoints) > 0;
+
+    private async Task ToggleProfile()
+    {
+        profileOpen = !profileOpen;
+        fitMap = true;
+        await RememberProfile();
+    }
+
+    private async Task CloseProfile()
+    {
+        profileOpen = false;
+        fitMap = true;
+        await RememberProfile();
+    }
+
+    private async Task RememberProfile()
+    {
+        try
+        {
+            await Map.RememberShowProfileAsync(profileOpen);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task ProfileHover(MouseEventArgs args)
+    {
+        try
+        {
+            var viewX = await Map.ProfileViewXAsync("course-profile", args.ClientX, args.ClientY);
+            hover = ElevationProfile.Hover(Chart, viewX, metric);
+        }
+        catch (JSException)
+        {
+            hover = "";
+        }
+    }
+
+    private async Task OpenProfileMenu(MouseEventArgs args)
+    {
+        try
+        {
+            await Map.OpenProfileMenuAsync(args.ClientX, args.ClientY, args.ClientX, args.ClientY);
+        }
+        catch (JSException)
+        {
+            message = "Could not open the profile menu.";
+        }
+    }
+
+    public Task ProfilePlace(string kind, double clientX, double clientY) =>
+        PlaceFromProfile(kind, null, clientX, clientY);
+
+    public Task ProfileInterval(string distance, double clientX, double clientY) =>
+        PlaceFromProfile("Interval", distance, clientX, clientY);
+
+    private async Task PlaceFromProfile(string kind, string? distance, double clientX, double clientY)
+    {
+        double viewX;
+        try
+        {
+            viewX = await Map.ProfileViewXAsync("course-profile", clientX, clientY);
+        }
+        catch (JSException)
+        {
+            message = "Could not read that spot on the profile.";
+            return;
+        }
+        var elapsed = SummitSearch.ProfileElapsedKm(viewX, Chart.MinDistanceKm, Chart.MaxDistanceKm);
+        if (kind == "Summit")
+        {
+            CourseEdits.StampRoute(waypoints);
+            var route = waypoints.Where(point => !CourseEdits.IsInterval(point)).ToList();
+            if (route.Count < 2)
+            {
+                message = "Course is too short to add a summit.";
+                StateHasChanged();
+                return;
+            }
+            var point = SummitSearch.PointAt(route, elapsed);
+            await PlaceSummitAt(point.Latitude, point.Longitude);
+            return;
+        }
+        if (kind == "Interval")
+        {
+            await FinishEdit(sketch.PlaceIntervalAt(elapsed, distance, course.CourseId), "Interval placed on the route. Save the course to keep it.");
+            return;
+        }
+        if (!Enum.TryParse<WaypointType>(kind, ignoreCase: true, out var type))
+        {
+            message = "That profile marker is not supported.";
+            return;
+        }
+        await FinishEdit(sketch.InsertAlongRoute(type, elapsed), type + " placed on the route. Save the course to keep it.");
+    }
+
+    private async Task<IReadOnlyList<double?>> MeasureElevations(IReadOnlyList<Waypoint> route, IReadOnlyList<double> elapsedKm)
+    {
+        var located = new List<SummitRoutePoint>(elapsedKm.Count);
+        foreach (var elapsed in elapsedKm)
+            located.Add(SummitSearch.PointAt(route, elapsed));
+        IReadOnlyList<double?> Stored() => located.Select(point => SummitSearch.IsKnown(point.AltitudeKm) ? (double?)point.AltitudeKm : null).ToList();
+        try
+        {
+            var response = await Api.ElevationLineAsync(new ElevationLineRequestDto
+            {
+                Points = located.Select((point, index) => new ElevationSampleDto
+                {
+                    Latitude = point.Latitude,
+                    Longitude = point.Longitude,
+                    ElapsedKm = elapsedKm[index],
+                    AltitudeKm = point.AltitudeKm
+                }).ToList()
+            });
+            if (response is { Found: true } && response.Points.Count == elapsedKm.Count)
+                return response.Points.Select(point => SummitSearch.IsKnown(point.AltitudeKm) ? (double?)point.AltitudeKm : null).ToList();
+        }
+        catch (HttpRequestException)
+        {
+        }
+        catch (TaskCanceledException)
+        {
+        }
+        return Stored();
+    }
+
+    public async Task SetWaypointType(int index, string typeName)
+    {
+        if (!WaypointMenus.TryApply(waypoints, index, typeName))
+        {
+            message = "That marker type was not changed.";
+            return;
+        }
+        message = "Marker set to " + WaypointMenus.Label(waypoints[index].WaypointType) + ". Save the course to keep it.";
+        await RefreshMap();
+    }
+
+    public Task DeleteWaypoint(int index) =>
+        FinishEdit(sketch.DeleteAt(index), "Waypoint deleted. Save the course to keep it.");
+
+    public Task ConnectWaypoint(int selectedIndex, int targetIndex, string typeName)
+    {
+        if (!Enum.TryParse<WaypointType>(typeName, ignoreCase: true, out var type))
+            return FinishEdit(CourseEdit.Fail("That connection is not on the menu."), "");
+        return FinishEdit(sketch.Connect(selectedIndex, targetIndex, type), "Connected. Save the course to keep it.");
+    }
+
+    public Task MoveWaypoint(int index, double latitude, double longitude) =>
+        FinishEdit(sketch.MoveTo(index, latitude, longitude, course.CourseId), "Waypoint moved. Save the course to keep it.");
+
+    public Task PlaceInterval(int index, string distance) =>
+        FinishEdit(sketch.PlaceInterval(index, distance, course.CourseId), "Interval placed on the route. Save the course to keep it.");
+
+    public Task StandardFinish(int selectedIndex, double latitude, double longitude) =>
+        FinishEdit(sketch.AddStandardFinish(selectedIndex, latitude, longitude, metric), "Standard finish added. Save the course to keep it.");
+
+    public async Task CloseLoop()
+    {
+        var start = LoopClose.Start(waypoints);
+        var last = sketch.LastRoutePoint();
+        if (start is null || last is null)
+        {
+            message = "Add a start before closing the loop.";
+            return;
+        }
+        if (!LoopClose.HasOpenLoop(waypoints))
+        {
+            message = "The course already finishes at the start.";
+            return;
+        }
+        var before = waypoints.Count;
+        sketch.AddClick(start.Latitude, start.Longitude, WaypointType.Finish, followRoads: true, await ClosingRoute(last, start));
+        if (waypoints.Count <= before)
+        {
+            message = "The course already finishes at the start.";
+            await RefreshMap();
+            return;
+        }
+        LoopClose.Publish(course, waypoints);
+        message = "Loop closed at the start.";
+        await RefreshMap();
+    }
+
+    /// <summary>
+    /// Follow roads from the last point toward the start. If the start pin is off
+    /// the road, search again with a wider snap, then pin the end to the exact start.
+    /// A real routing failure still closes with a straight segment and no error.
+    /// </summary>
+    private async Task<RouteResponseDto> ClosingRoute(Waypoint from, Waypoint start)
+    {
+        RouteResponseDto? route = null;
+        if (RoutingLimits.RejectSegment(from.Latitude, from.Longitude, start.Latitude, start.Longitude) is null)
+        {
+            route = await Api.RouteAsync(ClosingRequest(from, start, snapMeters: null));
+            if (LoopClose.NeedsWiderSnap(route))
+                route = await Api.RouteAsync(ClosingRequest(from, start, LoopClose.CloseSnapMeters));
+        }
+
+        if (route is { Routed: true, Points.Count: > 0 })
+        {
+            route.Points = LoopClose.PinEndToStart(route.Points, start.Latitude, start.Longitude);
+            return route;
+        }
+
+        return new RouteResponseDto
+        {
+            Routed = false,
+            StraightFallback = true,
+            Message = "Loop closed at the start."
+        };
+    }
+
+    private RouteRequestDto ClosingRequest(Waypoint from, Waypoint start, double? snapMeters) => new()
+    {
+        FromLatitude = from.Latitude,
+        FromLongitude = from.Longitude,
+        ToLatitude = start.Latitude,
+        ToLongitude = start.Longitude,
+        Activity = ActivityName(),
+        SnapRadiusMeters = snapMeters
+    };
+
+    private async Task<bool> AddAt(double latitude, double longitude, WaypointType type, bool? forceRoads = null)
+    {
+        var roads = forceRoads ?? true;
+        RouteResponseDto? route = null;
+        var previous = sketch.LastRoutePoint();
+        var interval = type is WaypointType.StartInterval or WaypointType.FinishInterval;
+        if (roads && !interval && previous is not null)
+        {
+            var rejected = RoutingLimits.RejectSegment(previous.Latitude, previous.Longitude, latitude, longitude);
+            if (rejected is not null && !RoutingLimits.AllowsStraightFallback(rejected))
+            {
+                message = rejected;
+                StateHasChanged();
+                return false;
+            }
+            route = await Api.RouteAsync(new RouteRequestDto
+            {
+                FromLatitude = previous.Latitude,
+                FromLongitude = previous.Longitude,
+                ToLatitude = latitude,
+                ToLongitude = longitude,
+                Activity = ActivityName()
+            });
+        }
+        var before = waypoints.Count;
+        sketch.AddClick(latitude, longitude, type, roads, route);
+        message = sketch.Notice;
+        await RefreshMap();
+        return waypoints.Count > before;
+    }
+
+    public async Task UndoLastSegment()
+    {
+        if (!sketch.Undo())
+        {
+            message = "Nothing to undo.";
+            return;
+        }
+        message = "Removed the last segment.";
+        await RefreshMap();
+    }
+
+    private async Task ExportGpx()
+    {
+        string? xml = null;
+        if (course.CourseId != Guid.Empty)
+            xml = await Api.ExportGpxAsync(course.CourseId);
+        xml ??= GpxCourse.Export(string.IsNullOrWhiteSpace(course.Name) ? "course" : course.Name, waypoints, IntervalCourse.FromMarkers(course.CourseId, waypoints));
+        await Map.DownloadAsync((string.IsNullOrWhiteSpace(course.Name) ? "course" : course.Name) + ".gpx", xml);
+    }
+
+    private async Task ImportGpx(InputFileChangeEventArgs change)
+    {
+        if (Session.Login is null)
+        {
+            message = "Sign in before importing.";
+            return;
+        }
+        await using var stream = change.File.OpenReadStream(GpxCourse.MaxCharacters);
+        using var reader = new StreamReader(stream);
+        var xml = await reader.ReadToEndAsync();
+        var preview = await Api.PreviewGpxAsync(xml, change.File.Name, toleranceMeters);
+        if (preview is null)
+        {
+            message = "GPX was not imported.";
+            return;
+        }
+        var keptId = course.CourseId;
+        course = preview.Course;
+        course.CourseId = keptId;
+        course.Login = Session.Login;
+        course.Publish = false;
+        sketch.Replace(preview.Waypoints);
+        message = "Review the imported course, then save. " + course.Comments;
+        await RefreshMap();
+    }
+
+    private CourseMapFrame Frame()
+    {
+        var finish = CourseEdits.StandardFinishMenuLabel(CourseEdits.LengthKm(waypoints), metric);
+        return new CourseMapFrame
+        {
+            Center = new GeoCoord(centerLat, centerLon),
+            Pins = waypoints.Select((waypoint, index) => new CoursePin(
+                index, waypoint.Latitude, waypoint.Longitude, waypoint.WaypointType, waypoint.TextDescription)).ToList(),
+            Menus = new CourseMapMenus
+            {
+                StandardFinish = finish,
+                NearStartMeters = LoopClose.NearStartMeters,
+                SamePointMeters = RoutePath.SamePointMeters,
+                IntervalDistances = CourseEdits.IntervalDistances,
+                PinTypes = WaypointMenus.PinMenuTypes.Select(type => new MenuChoice(type.ToString(), WaypointMenus.Label(type))).ToList(),
+                Connect = CourseEdits.ConnectTypes.Select(type => new MenuChoice(type.ToString(), WaypointMenus.Label(type))).ToList(),
+                MapMenuLast = Rows(true, finish),
+                MapMenuEarlier = Rows(false, finish)
+            }
+        };
+    }
+
+    private static List<MenuRow> Rows(bool lastPointSelected, string standardFinish) =>
+        MapContextMenu.For(lastPointSelected, standardFinish)
+            .Select(row => new MenuRow(row.Label, row.Action, row.Type))
+            .ToList();
+
+    private async Task ZoomToAddress()
+    {
+        if (string.IsNullOrWhiteSpace(zoomAddress))
+        {
+            message = "Enter an address to zoom to.";
+            return;
+        }
+        var found = await Api.GeocodeAsync(zoomAddress);
+        if (!found.Found)
+        {
+            message = string.IsNullOrWhiteSpace(found.Message) ? "That address was not found." : found.Message;
+            return;
+        }
+        try
+        {
+            await Map.SetViewAsync(new GeoCoord(found.Latitude, found.Longitude));
+            message = "Zoomed to the address.";
+        }
+        catch (JSException)
+        {
+            message = "The map is not ready.";
+        }
+    }
+
+    private async Task FinishEdit(CourseEdit edit, string success)
+    {
+        if (!edit.Ok)
+        {
+            message = edit.Message ?? "That edit was not applied.";
+            StateHasChanged();
+            return;
+        }
+        var notice = await RerouteGaps(edit.Gaps);
+        message = notice ?? success;
+        await RefreshMap();
+    }
+
+    private async Task<string?> RerouteGaps(IReadOnlyList<RouteGap> gaps)
+    {
+        if (gaps.Count == 0)
+            return null;
+        string? notice = null;
+        foreach (var gap in gaps)
+        {
+            var from = waypoints.FirstOrDefault(point => point.TimestampTicks == gap.FromTicks);
+            var to = waypoints.FirstOrDefault(point => point.TimestampTicks == gap.ToTicks);
+            if (from is null || to is null)
+                continue;
+            var rejected = RoutingLimits.RejectSegment(from.Latitude, from.Longitude, to.Latitude, to.Longitude);
+            if (rejected is not null && !RoutingLimits.AllowsStraightFallback(rejected))
+            {
+                notice = rejected;
+                continue;
+            }
+            var route = await Api.RouteAsync(new RouteRequestDto
+            {
+                FromLatitude = from.Latitude,
+                FromLongitude = from.Longitude,
+                ToLatitude = to.Latitude,
+                ToLongitude = to.Longitude,
+                Activity = ActivityName()
+            });
+            if (route is { Routed: true, Points.Count: > 0 })
+            {
+                sketch.SpliceRoute(gap.FromTicks, gap.ToTicks, route);
+                continue;
+            }
+            var text = string.IsNullOrWhiteSpace(route?.Message) ? "Routing failed." : route.Message.Trim();
+            notice = text.Contains("straight", StringComparison.OrdinalIgnoreCase)
+                ? text
+                : text.TrimEnd('.') + ". A straight segment was kept.";
+        }
+        return notice;
+    }
+
+    private async Task RefreshMap()
+    {
+        try
+        {
+            await Map.UpdateAsync(Frame());
+        }
+        catch (JSException)
+        {
+        }
+        SyncElevation();
+        await RememberDraft();
+        StateHasChanged();
+    }
+
+    private async Task LoadDraft()
+    {
+        try
+        {
+            var json = await Js.InvokeAsync<string?>("gpsTrainerDraft.load");
+            if (!EditorDraft.TryParse(json, out var draft))
+                return;
+            draft.ApplyTo(course, sketch, value => goalTime = value);
+            message = "Restored the course you were drawing.";
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private Task RememberDraft() => RememberDraft(CourseId);
+
+    private async Task RememberDraft(Guid routeId)
+    {
+        if (routeId != Guid.Empty)
+            return;
+        if (waypoints.Count == 0 && string.IsNullOrWhiteSpace(course.Name))
+            return;
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerDraft.save", EditorDraft.Serialize(course, waypoints, goalTime));
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task ClearDraft()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerDraft.clear");
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private void SyncElevation()
+    {
+        var measured = ElevationProfile.GainLoss(waypoints);
+        course.AltitudeGainKm = measured.GainKm;
+        course.AltitudeLossKm = measured.LossKm;
+    }
+
+    private async Task Save()
+    {
+        if (Session.Login is null)
+        {
+            message = "Sign in first.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(course.Name))
+            course.Name = "Untitled course";
+        SyncElevation();
+        var saved = await Api.SaveCourseAsync(course, creating);
+        if (saved is null)
+        {
+            message = "The course was not saved.";
+            return;
+        }
+        creating = false;
+        course.CourseId = saved.CourseId;
+        var savedWaypoints = true;
+        if (waypoints.Count > 0)
+        {
+            if (waypoints.All(wp => wp.ElapsedDistanceKm == 0))
+            {
+                var distance = 0.0;
+                GeoPosition? previous = null;
+                foreach (var wp in waypoints)
+                {
+                    var here = new GeoPosition(wp.Latitude, wp.Longitude, false);
+                    if (previous is not null)
+                        distance += previous.DistanceTo(here).ToKilometers().Value;
+                    wp.ElapsedDistanceKm = distance;
+                    previous = here;
+                }
+                course.ElapsedDistanceKm = distance;
+            }
+            savedWaypoints = await Api.SaveWaypointsAsync(course.CourseId, waypoints);
+            await Api.SaveCourseAsync(course);
+        }
+        var raceId = await Api.GenerateRaceAsync(course.CourseId, goalTime);
+        await ClearDraft();
+        var savedText = savedWaypoints ? "Saved." : "Course saved, waypoints were not.";
+        message = savedText + (raceId == Guid.Empty ? " A goal race was not created." : " A goal race was created.");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await RememberDraft();
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerDialogs.unwatch");
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        try
+        {
+            await Map.UnmountAsync();
+        }
+        catch (JSException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        UnhookMap();
+        self?.Dispose();
+    }
+
+    private void HookMap()
+    {
+        if (mapEventsHooked)
+            return;
+        Map.MapClicked += OnMapClicked;
+        Map.PinDragged += OnPinDragged;
+        Map.InsertRequested += OnInsertRequested;
+        Map.DeleteRequested += OnDeleteRequested;
+        Map.ConnectRequested += OnConnectRequested;
+        Map.TypeChangeRequested += OnTypeChangeRequested;
+        Map.IntervalRequested += OnIntervalRequested;
+        Map.StandardFinishRequested += OnStandardFinishRequested;
+        Map.TextChangeRequested += OnTextChangeRequested;
+        Map.SummitRequested += OnSummitRequested;
+        Map.SummitAtRequested += OnSummitAtRequested;
+        Map.ProfilePlaceRequested += OnProfilePlaceRequested;
+        Map.ProfileIntervalRequested += OnProfileIntervalRequested;
+        Map.LoopCloseRequested += OnLoopCloseRequested;
+        Map.UndoRequested += OnUndoRequested;
+        mapEventsHooked = true;
+    }
+
+    private void UnhookMap()
+    {
+        if (!mapEventsHooked)
+            return;
+        Map.MapClicked -= OnMapClicked;
+        Map.PinDragged -= OnPinDragged;
+        Map.InsertRequested -= OnInsertRequested;
+        Map.DeleteRequested -= OnDeleteRequested;
+        Map.ConnectRequested -= OnConnectRequested;
+        Map.TypeChangeRequested -= OnTypeChangeRequested;
+        Map.IntervalRequested -= OnIntervalRequested;
+        Map.StandardFinishRequested -= OnStandardFinishRequested;
+        Map.TextChangeRequested -= OnTextChangeRequested;
+        Map.SummitRequested -= OnSummitRequested;
+        Map.SummitAtRequested -= OnSummitAtRequested;
+        Map.ProfilePlaceRequested -= OnProfilePlaceRequested;
+        Map.ProfileIntervalRequested -= OnProfileIntervalRequested;
+        Map.LoopCloseRequested -= OnLoopCloseRequested;
+        Map.UndoRequested -= OnUndoRequested;
+        mapEventsHooked = false;
+    }
+
+    private Task OnMapClicked(GeoCoord point) => AddWaypoint(point.Latitude, point.Longitude);
+
+    private Task OnPinDragged(int index, GeoCoord point) => MoveWaypoint(index, point.Latitude, point.Longitude);
+
+    private Task OnInsertRequested(string typeName, GeoCoord point, bool route) =>
+        InsertWaypoint(typeName, point.Latitude, point.Longitude, route);
+
+    private Task OnDeleteRequested(int index) => DeleteWaypoint(index);
+
+    private Task OnConnectRequested(int selectedIndex, int targetIndex, string typeName) =>
+        ConnectWaypoint(selectedIndex, targetIndex, typeName);
+
+    private Task OnTypeChangeRequested(int index, string typeName) => SetWaypointType(index, typeName);
+
+    private Task OnIntervalRequested(int index, string distance) => PlaceInterval(index, distance);
+
+    private Task OnStandardFinishRequested(int index, GeoCoord point) =>
+        StandardFinish(index, point.Latitude, point.Longitude);
+
+    private Task OnTextChangeRequested(int index, string text) => SetWaypointText(index, text);
+
+    private Task OnSummitRequested(int index) => PlaceSummit(index);
+
+    private Task OnSummitAtRequested(GeoCoord point) => PlaceSummitAt(point.Latitude, point.Longitude);
+
+    private Task OnProfilePlaceRequested(string kind, double clientX, double clientY) =>
+        ProfilePlace(kind, clientX, clientY);
+
+    private Task OnProfileIntervalRequested(string distance, double clientX, double clientY) =>
+        ProfileInterval(distance, clientX, clientY);
+
+    private Task OnLoopCloseRequested() => CloseLoop();
+
+    private Task OnUndoRequested() => UndoLastSegment();
+}

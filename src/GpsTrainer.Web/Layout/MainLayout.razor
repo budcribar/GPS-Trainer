@@ -1,0 +1,78 @@
+@inherits LayoutComponentBase
+@inject Session Session
+@inject GpsApi Api
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="site">
+    <header>
+        @if (!OnEditor)
+        {
+            <SiteBrand />
+        }
+        <nav>
+            <a href="">Home</a>
+            @if (Session.Login is null)
+            {
+                <a href="signup">New user</a>
+            }
+            else
+            {
+                <a href="account">User</a>
+            }
+            <a href="download">Download</a>
+            <a href="courses">Courses</a>
+            <a href="races">Races</a>
+            <a href="help">Support</a>
+            <a href="contact">Contact</a>
+            @if (Session.Login is null)
+            {
+                <a href="login">Sign in</a>
+            }
+            else
+            {
+                <a class="header-user" href="account">@Session.Login</a>
+                <button type="button" class="header-signout" @onclick="SignOut">Sign out</button>
+            }
+        </nav>
+    </header>
+    <main>
+        @Body
+    </main>
+    <footer>
+        <p>Copyright © Peak Software Consulting, LLC. TruePace and gpsTrainer are trademarks of Peak Software Consulting, LLC.</p>
+        <p><a href="privacy">Privacy policy</a></p>
+    </footer>
+</div>
+
+@code {
+    private bool OnEditor
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).Trim('/');
+            return path.Equals("editor", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("editor/", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += StateHasChanged;
+        Navigation.LocationChanged += OnLocation;
+    }
+
+    private void OnLocation(object? sender, LocationChangedEventArgs e) => StateHasChanged();
+
+    private async Task SignOut()
+    {
+        await Api.LogoutAsync();
+        Navigation.NavigateTo("");
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= StateHasChanged;
+        Navigation.LocationChanged -= OnLocation;
+    }
+}

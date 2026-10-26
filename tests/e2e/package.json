@@ -1,0 +1,13 @@
+{
+  "name": "gpstrainer-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test --project=local --project=live",
+    "test:local": "playwright test --project=local",
+    "test:live": "playwright test --project=live",
+    "test:live-routing": "playwright test --project=live-routing"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

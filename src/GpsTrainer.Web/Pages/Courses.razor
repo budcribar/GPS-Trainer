@@ -1,0 +1,94 @@
+@page "/courses"
+@inject GpsApi Api
+@inject Session Session
+@inject IJSRuntime Js
+<PageTitle>Courses</PageTitle>
+<section class="courses">
+    <img class="courses-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+    <h1>Courses</h1>
+    @if (Session.Login is null)
+    {
+        <p class="courses-lead">Sign in to see the courses enabled for download on your login.</p>
+    }
+    else if (courses is null)
+    {
+        <p class="courses-lead">Loading…</p>
+    }
+    else if (courses.Count == 0)
+    {
+        <p class="courses-lead">No courses. Record one in the phone app, or start one in the editor.</p>
+    }
+    else
+    {
+        <table class="courses-table">
+            <thead><tr><th>Name</th><th>Distance km</th><th>Activity</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var course in courses)
+            {
+                <tr>
+                    <td class="courses-name"><a href="@($"editor/{course.CourseId}")">@course.Name</a></td>
+                    <td class="courses-distance" data-label="Distance km">@course.ElapsedDistanceKm.ToString("0.00")</td>
+                    <td class="courses-activity" data-label="Activity">@ActivityName(course)</td>
+                    <td class="courses-actions">
+                        @if (withIntervals.Contains(course.CourseId))
+                        {
+                            <a href="@($"intervals/{course.CourseId}")">Intervals</a>
+                        }
+                        <button type="button" class="courses-gpx" @onclick="() => DownloadGpx(course)">Download GPX</button>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    }
+    <p class="courses-links"><a href="editor">New course</a> · <a href="generate">Generate a Fort Collins loop</a> · <a href="find">Find a course</a></p>
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p id="courses-note" class="notice">@message</p>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<Course>? courses;
+    private IReadOnlyList<ActivityCode> activities = [];
+    private readonly HashSet<Guid> withIntervals = [];
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is null)
+            return;
+        var loadedCourses = Api.CoursesAsync();
+        var loadedActivities = Api.ActivitiesAsync();
+        courses = await loadedCourses;
+        activities = await loadedActivities;
+        var flagged = await Task.WhenAll(courses.Select(async course =>
+        {
+            var intervals = await Api.IntervalsAsync(course.CourseId);
+            return (course.CourseId, intervals.Count > 0);
+        }));
+        foreach (var (id, hasIntervals) in flagged)
+        {
+            if (hasIntervals)
+                withIntervals.Add(id);
+        }
+    }
+
+    private string ActivityName(Course course)
+    {
+        var name = activities.FirstOrDefault(activity => activity.ActKey == course.ActivityCode)?.ActValue;
+        return string.IsNullOrWhiteSpace(name) ? "Unknown activity" : name;
+    }
+
+    private async Task DownloadGpx(Course course)
+    {
+        var xml = await Api.ExportGpxAsync(course.CourseId);
+        if (string.IsNullOrEmpty(xml))
+        {
+            message = "GPX was not downloaded.";
+            return;
+        }
+        var name = string.IsNullOrWhiteSpace(course.Name) ? "course" : course.Name;
+        await Js.InvokeVoidAsync("gpsTrainerCourseEditor.download", name + ".gpx", xml);
+    }
+}

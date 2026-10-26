@@ -1,0 +1,275 @@
+@page "/account"
+@inject GpsApi Api
+@inject Session Session
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<PageTitle>Account</PageTitle>
+@if (Session.Login is null)
+{
+    <section class="account">
+        <img class="account-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+        <h1>Account</h1>
+        <p class="account-lead"><a href="login">Sign in</a> to change your password or set your map location.</p>
+        @if (place == "session")
+        {
+            @Note("account-session-note")
+        }
+    </section>
+}
+else
+{
+    <section class="account">
+        <img class="account-mark" src="images/gpstrainer-icon.svg" alt="GPS Trainer" width="72" height="72" />
+        <h1>Account</h1>
+        <p class="account-lead">Signed in as @Session.Login.</p>
+        <EditForm Model="form" OnValidSubmit="Submit" class="account-form" novalidate>
+            <div class="account-field">
+                <label for="account-current">Current password</label>
+                <div class="account-password">
+                    <AutofillInput Id="account-current" Type="@(showCurrent ? "text" : "password")" @bind-Value="form.CurrentPassword" Autocomplete="current-password"
+                                   AriaInvalid="@Invalid(place == "password" && problem)" AriaDescribedBy="@Described(place == "password" && problem, "account-password-note")" />
+                    <PasswordReveal CssClass="account-reveal" Controls="account-current" Pressed="showCurrent" OnClick="ToggleCurrent" />
+                </div>
+            </div>
+            <div class="account-field">
+                <label for="account-next">New password</label>
+                <div class="account-password">
+                    <AutofillInput Id="account-next" Type="@(showNext ? "text" : "password")" @bind-Value="form.NewPassword" Autocomplete="new-password" />
+                    <PasswordReveal CssClass="account-reveal" Controls="account-next" Pressed="showNext" OnClick="ToggleNext" />
+                </div>
+            </div>
+            @if (place == "password")
+            {
+                @Note("account-password-note")
+            }
+            <button type="submit" class="account-submit">Change password</button>
+        </EditForm>
+    </section>
+    <section class="account account-location">
+        <h2>Map location</h2>
+        <p class="account-copy">The course editor, Find page, and route generator open here. Click the map or search for an address. Nothing is saved until you click or search.</p>
+        <div class="account-field">
+            <label for="account-address">Address</label>
+            <input id="account-address" @bind="address" placeholder="City, region" aria-invalid="@Invalid(place == "location" && problem)" aria-describedby="@Described(place == "location" && problem, "account-location-note")" />
+        </div>
+        <button type="button" class="account-submit" @onclick="Geocode">Find address</button>
+        <div id="profile-map"></div>
+        <p class="map-credit">© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, directions and elevation from <a href="https://openrouteservice.org/">openrouteservice</a> by <a href="https://heigit.org/">HeiGIT</a>.</p>
+        @if (place == "location")
+        {
+            @Note("account-location-note")
+        }
+    </section>
+    <section class="account account-delete">
+        <h2>Delete account</h2>
+        <p class="account-copy">This deletes the account and the courses, rides, and location trails stored with it. This cannot be undone.</p>
+        @if (!confirmingDelete)
+        {
+            <button type="button" class="account-delete-open" @onclick="OpenDelete">Delete account</button>
+        }
+        else
+        {
+            <div class="account-field">
+                <label for="account-delete-confirm">Type your password or DELETE</label>
+                <input id="account-delete-confirm" @bind="deleteConfirmation" autocomplete="off" aria-invalid="@Invalid(place == "delete" && problem)" aria-describedby="@Described(place == "delete" && problem, "account-delete-note")" />
+            </div>
+            @if (place == "delete")
+            {
+                @Note("account-delete-note")
+            }
+            <button type="button" class="account-delete-submit" @onclick="DeleteAccount">Delete account</button>
+            <button type="button" class="account-delete-cancel" @onclick="CancelDelete">Cancel</button>
+        }
+    </section>
+}
+
+@code {
+    private readonly PasswordChangeRequest form = new();
+    private string? message;
+    private string place = "";
+    private bool problem;
+    private string address = "";
+    private bool showCurrent;
+    private bool showNext;
+    private bool confirmingDelete;
+    private string deleteConfirmation = "";
+    private double latitude = MapDefaults.FortCollinsLatitude;
+    private double longitude = MapDefaults.FortCollinsLongitude;
+    private DotNetObjectReference<Account>? self;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Login is null)
+            return;
+        var profile = await Api.ProfileAsync();
+        if (profile is null)
+            return;
+        Session.UpdateUser(profile);
+        var opening = MapDefaults.OpeningCenter(profile.Latitude, profile.Longitude);
+        latitude = opening.Latitude;
+        longitude = opening.Longitude;
+        KeepPasswords();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || Session.Login is null)
+            return;
+        self = DotNetObjectReference.Create(this);
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerCourseEditor.mountLocationPicker", "#profile-map", latitude, longitude, self);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public async Task SetHomeLocation(double lat, double lon)
+    {
+        KeepPasswords();
+        latitude = lat;
+        longitude = lon;
+        var saved = await Api.SaveLocationAsync(lat, lon);
+        Say(saved is null ? "The location was not saved." : "Map location saved.", "location", saved is null);
+        StateHasChanged();
+    }
+
+    private async Task Geocode()
+    {
+        KeepPasswords();
+        var found = await Api.GeocodeAsync(address);
+        if (!found.Found)
+        {
+            Say(string.IsNullOrWhiteSpace(found.Message) ? "No location found." : found.Message, "location", true);
+            return;
+        }
+        latitude = found.Latitude;
+        longitude = found.Longitude;
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerCourseEditor.setLocation", latitude, longitude);
+        }
+        catch (JSException)
+        {
+        }
+        var saved = await Api.SaveLocationAsync(latitude, longitude);
+        Say(saved is null
+            ? "The address was found, but the location was not saved."
+            : string.IsNullOrWhiteSpace(found.Label) ? "Map location saved." : "Map location saved: " + found.Label,
+            "location",
+            saved is null);
+    }
+
+    private void OpenDelete()
+    {
+        KeepPasswords();
+        confirmingDelete = true;
+        deleteConfirmation = "";
+        if (place == "delete")
+            Say("", "", false);
+    }
+
+    private void CancelDelete()
+    {
+        KeepPasswords();
+        confirmingDelete = false;
+        deleteConfirmation = "";
+        if (place == "delete")
+            Say("", "", false);
+    }
+
+    private async Task DeleteAccount()
+    {
+        KeepPasswords();
+        FieldValues.CopyDom(Js, "account-delete-confirm", deleteConfirmation, value => deleteConfirmation = value);
+        var confirmation = deleteConfirmation.Trim();
+        if (confirmation.Length == 0)
+        {
+            Say("Type your password or DELETE.", "delete", true);
+            return;
+        }
+        var deleted = await Api.DeleteAccountAsync(confirmation);
+        if (!deleted)
+        {
+            Say("The account was not deleted. Type your password or DELETE.", "delete", true);
+            return;
+        }
+        Nav.NavigateTo("");
+    }
+
+    private async Task Submit()
+    {
+        await AdoptAsync();
+        var ok = await Api.ChangePasswordAsync(form);
+        Say(ok ? "Password updated." : "The current password was not accepted.", "password", !ok);
+    }
+
+    private void ToggleCurrent()
+    {
+        KeepPasswords();
+        showCurrent = !showCurrent;
+    }
+
+    private void ToggleNext()
+    {
+        KeepPasswords();
+        showNext = !showNext;
+    }
+
+    private void KeepPasswords()
+    {
+        FieldValues.CopyDom(Js, "account-current", form.CurrentPassword, value => form.CurrentPassword = value);
+        FieldValues.CopyDom(Js, "account-next", form.NewPassword, value => form.NewPassword = value);
+    }
+
+    private Task AdoptAsync() => FieldValues.CopyAllAsync(
+        Js,
+        ["account-current", "account-next"],
+        id => id == "account-next" ? form.NewPassword : form.CurrentPassword,
+        (id, value) =>
+        {
+            if (id == "account-next")
+                form.NewPassword = value;
+            else
+                form.CurrentPassword = value;
+        });
+
+    private void Say(string text, string where, bool failed)
+    {
+        message = text;
+        place = where;
+        problem = failed;
+    }
+
+    private static string? Invalid(bool failed) => failed ? "true" : null;
+
+    private static string? Described(bool failed, string id) => failed ? id : null;
+
+    private RenderFragment Note(string id) => builder =>
+    {
+        if (string.IsNullOrEmpty(message))
+            return;
+        builder.OpenElement(0, "p");
+        builder.AddAttribute(1, "id", id);
+        builder.AddAttribute(2, "class", problem ? "account-error" : "account-status");
+        builder.AddAttribute(3, "role", problem ? "alert" : "status");
+        builder.AddContent(4, message);
+        builder.CloseElement();
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("gpsTrainerCourseEditor.unmount");
+        }
+        catch (JSException)
+        {
+        }
+        self?.Dispose();
+    }
+}
