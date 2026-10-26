@@ -19,14 +19,14 @@ sleep 12
 adb exec-out screencap -p > "$out/sign-in.png"
 adb shell uiautomator dump /sdcard/uidump.xml || true
 adb pull /sdcard/uidump.xml "$out/sign-in.xml" || true
-adb logcat -d -b crash > "$out/crash.txt" || true
-adb logcat -d > "$out/logcat.txt" || true
 
 set +e
 python3 "$root/scripts/android-drive.py" "$out"
 status=$?
 set -e
 adb exec-out screencap -p > "$out/after-drive.png"
+adb logcat -d -b crash > "$out/crash.txt" || true
+adb logcat -d > "$out/logcat.txt" || true
 if [[ ! -f "$out/course.png" ]]; then
   echo "The course screen was not reached. Sign-in screenshot is in android-screenshots/sign-in.png."
   if [[ -f "$out/crash.txt" ]]; then

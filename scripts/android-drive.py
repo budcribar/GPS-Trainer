@@ -177,6 +177,9 @@ def main() -> int:
     if not type_into(root, "Password:", PASSWORD):
         print("Could not find the password field.")
         return 1
+    # The keyboard inset is applied after the field is focused. Wait for that
+    # layout pass so the Login tap uses the position above the keyboard.
+    time.sleep(1.5)
     root = dump("login.xml")
     if not tap(find(root, "Login")):
         print("Could not find the Login button.")
@@ -186,6 +189,15 @@ def main() -> int:
     shot("courses.png")
     if find(root, "Courses") is None and find(root, "New Course") is None:
         print("Sign-in did not reach the course list.")
+        login = find(root, "Login")
+        print(f"  Login bounds={login.attrib.get('bounds') if login is not None else 'missing'}")
+        for node in nodes(root):
+            if node.attrib.get("password") == "true":
+                print(f"  password text length={len(node.attrib.get('text') or '')} bounds={node.attrib.get('bounds')}")
+        shown = sh("adb", "shell", "dumpsys", "input_method")
+        for line in shown.splitlines():
+            if "mInputShown" in line or "mImeWindowVis" in line or "imeFrame" in line or "mVisible" in line:
+                print(" ", line.strip())
         return 1
 
     menu_ok = True

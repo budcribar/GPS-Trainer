@@ -152,6 +152,40 @@ static class Ui
         return button;
     }
 
+    /// <summary>
+    /// Pad the page above the keyboard. MAUI draws edge to edge, so adjustResize
+    /// does not shrink the window unless the page asks for the soft-input inset.
+    /// </summary>
+    public static void KeepAboveKeyboard(ContentPage page)
+    {
+        page.SafeAreaEdges = new SafeAreaEdges(
+            SafeAreaRegions.None,
+            SafeAreaRegions.None,
+            SafeAreaRegions.None,
+            SafeAreaRegions.SoftInput);
+        page.HideSoftInputOnTapped = true;
+    }
+
+    /// <summary>Fields scroll. Actions stay in the band above the keyboard.</summary>
+    public static Grid Form(ContentPage page, IReadOnlyList<View> fields, IReadOnlyList<View> actions)
+    {
+        KeepAboveKeyboard(page);
+        var bar = new VerticalStackLayout { Padding = new Thickness(16, 0, 16, 16), Spacing = 10 };
+        foreach (var action in actions)
+            bar.Add(action);
+        var grid = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(GridLength.Star),
+                new RowDefinition(GridLength.Auto)
+            }
+        };
+        grid.Add(new ScrollView { Content = Column(fields.ToArray()) }, 0, 0);
+        grid.Add(bar, 0, 1);
+        return grid;
+    }
+
     public static Task Push(Page page) =>
         (Application.Current?.Windows[0].Page as NavigationPage)?.PushAsync(page) ?? Task.CompletedTask;
 }
@@ -168,17 +202,21 @@ public class LoginPage : ContentPage
         _login.Text = Preferences.Get("SignIn", "");
         if (Preferences.Get("SavePassword", true))
             _password.Text = Preferences.Get("Password", "");
-        Content = new ScrollView
-        {
-            Content = Ui.Column(
+        _password.ReturnType = ReturnType.Go;
+        _password.Completed += async (_, _) => await SignIn();
+        Content = Ui.Form(
+            this,
+            [
                 new Image { Source = "gpstrainer.png", HeightRequest = 72, WidthRequest = 72, HorizontalOptions = LayoutOptions.Center },
                 Ui.Heading(AppStrings.app_name),
                 Ui.Labeled(AppStrings.UserName, _login),
-                Ui.Labeled(AppStrings.Password, _password),
+                Ui.Labeled(AppStrings.Password, _password)
+            ],
+            [
+                _message,
                 Ui.Command(AppStrings.login_login_button, SignIn),
-                Ui.Command(AppStrings.signup_button, () => Ui.Push(new SignupPage())),
-                _message)
-        };
+                Ui.Command(AppStrings.signup_button, () => Ui.Push(new SignupPage()))
+            ]);
     }
 
     private async Task SignIn()
@@ -249,19 +287,21 @@ public class SignupPage : ContentPage
     public SignupPage()
     {
         Title = AppStrings.signup_button;
-        Content = new ScrollView
-        {
-            Content = Ui.Column(
+        Content = Ui.Form(
+            this,
+            [
                 Ui.Heading(AppStrings.signup_button),
                 Ui.Labeled(AppStrings.UserName, _login),
                 Ui.Labeled(AppStrings.Password, _password),
                 Ui.Labeled(AppStrings.email, _email),
                 Ui.Labeled(AppStrings.firstName, _first),
                 Ui.Labeled(AppStrings.LastName, _last),
-                Ui.Labeled(AppStrings.phone, _phone),
-                Ui.Command(AppStrings.signup_continue_button, Submit),
-                _message)
-        };
+                Ui.Labeled(AppStrings.phone, _phone)
+            ],
+            [
+                _message,
+                Ui.Command(AppStrings.signup_continue_button, Submit)
+            ]);
     }
 
     private async Task Submit()
@@ -427,8 +467,7 @@ public class CourseEditPage : ContentPage
             map.Show(_imported.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())));
             views.Add(map);
         }
-        views.Add(Ui.Command(AppStrings.confirm, Save));
-        Content = new ScrollView { Content = Ui.Column(views.ToArray()) };
+        Content = Ui.Form(this, views, [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -603,10 +642,10 @@ public class RaceEditPage : ContentPage
         _race = race;
         Title = AppStrings.menu_edit_race;
         _comments.Text = race.Comments;
-        Content = new ScrollView
-        {
-            Content = Ui.Column(Ui.Heading(Title), Ui.Labeled(AppStrings.race_comments, _comments), Ui.Command(AppStrings.confirm, Save))
-        };
+        Content = Ui.Form(
+            this,
+            [Ui.Heading(Title), Ui.Labeled(AppStrings.race_comments, _comments)],
+            [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -1295,14 +1334,14 @@ public class InsertWaypointPage : ContentPage
         foreach (var type in Enum.GetValues<WaypointType>())
             _type.Items.Add(type.ToString());
         _type.SelectedIndex = (int)WaypointType.TurnLeft;
-        Content = new ScrollView
-        {
-            Content = Ui.Column(
+        Content = Ui.Form(
+            this,
+            [
                 Ui.Heading("Waypoint"),
                 Ui.Labeled("Waypoint", _type),
-                Ui.Labeled("Description", _description),
-                Ui.Command(AppStrings.confirm, Save))
-        };
+                Ui.Labeled("Description", _description)
+            ],
+            [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -1338,6 +1377,7 @@ public class PreferencesPage : ContentPage
     public PreferencesPage()
     {
         Title = AppStrings.menu_options;
+        Ui.KeepAboveKeyboard(this);
         var layout = Ui.Column(Ui.Heading(AppStrings.menu_options));
         var metric = new Switch
         {
