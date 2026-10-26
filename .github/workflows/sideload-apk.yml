@@ -1,0 +1,64 @@
+name: Sideload APK
+
+# Debug-signed arm64 APK for a phone. Uses the Android debug key.
+# Does not read the Play upload keystore or any signing password.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/sideload-apk-6862
+
+jobs:
+  apk:
+    name: sideload-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install the MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Build a debug-signed arm64 APK
+        env:
+          AndroidSigningKeyStore: ""
+          AndroidSigningKeyAlias: ""
+          AndroidSigningStorePass: ""
+          AndroidSigningKeyPass: ""
+          GPSTRAINER_ANDROID_KEYSTORE: ""
+          GPSTRAINER_ANDROID_KEY_ALIAS: ""
+          GPSTRAINER_ANDROID_STORE_PASS: ""
+          GPSTRAINER_ANDROID_KEY_PASS: ""
+        run: >
+          dotnet build src/GpsTrainer.App/GpsTrainer.App.csproj
+          -f net10.0-android
+          -c Debug
+          -p:AndroidPackageFormat=apk
+          -p:RuntimeIdentifier=android-arm64
+          -p:EmbedAssembliesIntoApk=true
+          -p:AndroidKeyStore=false
+          -p:ApplicationId=com.peakSwc.gpsTrainer
+
+      - name: Collect the signed APK
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find src/GpsTrainer.App/bin/Debug/net10.0-android -type f -name '*-Signed.apk')
+          if [[ ${#apks[@]} -ne 1 ]]; then
+            echo "Expected one debug-signed APK, found ${#apks[@]}."
+            printf '%s\n' "${apks[@]:-}"
+            exit 1
+          fi
+          mkdir -p dist
+          cp "${apks[0]}" dist/gpstrainer-1.46-arm64-debug.apk
+          echo "Packed ${apks[0]}"
+
+      - name: Upload the sideload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpstrainer-1.46-sideload-arm64
+          path: dist/gpstrainer-1.46-arm64-debug.apk
+          if-no-files-found: error
