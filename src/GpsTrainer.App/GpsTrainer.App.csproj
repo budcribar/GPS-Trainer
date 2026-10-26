@@ -60,7 +60,9 @@
 
 	<ItemGroup>
 		<!-- App Icon -->
-		<MauiIcon Include="Resources\AppIcon\appicon.png" Color="#F4F8FB" />
+		<!-- Android uses hand-authored adaptive layers under Platforms/Android/Resources.
+		     MauiIcon would scale the full artwork into the mask and crop it. -->
+		<MauiIcon Include="Resources\AppIcon\appicon.png" Color="#F4F8FB" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'android'" />
 
 		<!-- Splash Screen -->
 		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#0B3D6A" BaseSize="128,128" />

@@ -18,7 +18,103 @@ static class Ui
         return layout;
     }
 
-    public static Label Heading(string text) => new() { Text = text, FontSize = 26, FontAttributes = FontAttributes.Bold };
+    public static Label Heading(string text) => new()
+    {
+        Text = text,
+        FontSize = 26,
+        FontAttributes = FontAttributes.Bold,
+        LineBreakMode = LineBreakMode.WordWrap
+    };
+
+    public static View Labeled(string caption, View field)
+    {
+        field.HorizontalOptions = LayoutOptions.Fill;
+        if (field.MinimumHeightRequest < 48)
+            field.MinimumHeightRequest = 48;
+        return new VerticalStackLayout
+        {
+            Spacing = 4,
+            Children =
+            {
+                new Label { Text = caption, LineBreakMode = LineBreakMode.WordWrap },
+                field
+            }
+        };
+    }
+
+    /// <summary>Label on the left, switch on the right, one row, at least 48dp tall.</summary>
+    public static View SwitchRow(string title, string? description, Switch toggle)
+    {
+        toggle.HorizontalOptions = LayoutOptions.End;
+        toggle.VerticalOptions = LayoutOptions.Center;
+        var text = new VerticalStackLayout
+        {
+            Spacing = 2,
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Fill
+        };
+        text.Add(new Label
+        {
+            Text = title,
+            LineBreakMode = LineBreakMode.WordWrap,
+            VerticalOptions = LayoutOptions.Center
+        });
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            text.Add(new Label
+            {
+                Text = description,
+                FontSize = 13,
+                LineBreakMode = LineBreakMode.WordWrap,
+                TextColor = Application.Current?.RequestedTheme == AppTheme.Dark
+                    ? Color.FromArgb("#C8C8C8")
+                    : Color.FromArgb("#404040")
+            });
+        }
+        var row = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto)
+            },
+            ColumnSpacing = 12,
+            Padding = new Thickness(0, 4),
+            MinimumHeightRequest = 48
+        };
+        row.Add(text, 0, 0);
+        row.Add(toggle, 1, 0);
+        return row;
+    }
+
+    public static View FactRow(string title, string value)
+    {
+        var row = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(new GridLength(108)),
+                new ColumnDefinition(GridLength.Star)
+            },
+            ColumnSpacing = 12,
+            MinimumHeightRequest = 48
+        };
+        row.Add(new Label
+        {
+            Text = title,
+            VerticalOptions = LayoutOptions.Center,
+            LineBreakMode = LineBreakMode.WordWrap
+        }, 0, 0);
+        row.Add(new Label
+        {
+            Text = value,
+            HorizontalTextAlignment = TextAlignment.End,
+            HorizontalOptions = LayoutOptions.Fill,
+            VerticalOptions = LayoutOptions.Center,
+            LineBreakMode = LineBreakMode.WordWrap
+        }, 1, 0);
+        return row;
+    }
 
     public static VerticalStackLayout IntervalList(IReadOnlyList<Waypoint> waypoints)
     {
@@ -56,6 +152,83 @@ static class Ui
         return button;
     }
 
+    /// <summary>
+    /// Pad the page above the keyboard. MAUI draws edge to edge, so adjustResize
+    /// does not shrink the window unless the page asks for the soft-input inset.
+    /// </summary>
+    public static void KeepAboveKeyboard(ContentPage page)
+    {
+        page.SafeAreaEdges = new SafeAreaEdges(
+            SafeAreaRegions.None,
+            SafeAreaRegions.None,
+            SafeAreaRegions.None,
+            SafeAreaRegions.SoftInput);
+        page.HideSoftInputOnTapped = true;
+    }
+
+    /// <summary>Fields scroll. The save action stays in the band above the keyboard.</summary>
+    public static Grid Form(ContentPage page, IReadOnlyList<View> fields, IReadOnlyList<View> actions)
+    {
+        KeepAboveKeyboard(page);
+        var bar = new VerticalStackLayout { Padding = new Thickness(16, 0, 16, 16), Spacing = 10 };
+        foreach (var action in actions)
+            bar.Add(action);
+        var grid = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(GridLength.Star),
+                new RowDefinition(GridLength.Auto)
+            }
+        };
+        grid.Add(new ScrollView { Content = Column(fields.ToArray()) }, 0, 0);
+        grid.Add(bar, 0, 1);
+        return grid;
+    }
+
+    /// <summary>
+    /// One scrolling column. Chrome (logo, heading) hides while an entry is focused so a
+    /// 320x640 screen can show the fields above the keyboard. When <paramref name="pinToTop"/>
+    /// is set, focusing a field scrolls back to the top so the fields stay together.
+    /// </summary>
+    public static ScrollView AuthForm(ContentPage page, IReadOnlyList<View> chrome, IReadOnlyList<View> body, IReadOnlyList<Entry> entries, bool pinToTop)
+    {
+        KeepAboveKeyboard(page);
+        var column = Column(chrome.Concat(body).ToArray());
+        column.Spacing = 6;
+        column.Padding = new Thickness(12, 8, 12, 8);
+        var scroll = new ScrollView { Content = column };
+        foreach (var entry in entries)
+        {
+            entry.Focused += async (_, _) =>
+            {
+                foreach (var view in chrome)
+                    view.IsVisible = false;
+                await Task.Delay(280);
+                try
+                {
+                    if (pinToTop)
+                        await scroll.ScrollToAsync(0, 0, false);
+                    else
+                        await scroll.ScrollToAsync(entry, ScrollToPosition.MakeVisible, false);
+                }
+                catch (Exception)
+                {
+                    // The page can close while the keyboard inset is still changing.
+                }
+            };
+            entry.Unfocused += async (_, _) =>
+            {
+                await Task.Delay(180);
+                if (entries.Any(item => item.IsFocused))
+                    return;
+                foreach (var view in chrome)
+                    view.IsVisible = true;
+            };
+        }
+        return scroll;
+    }
+
     public static Task Push(Page page) =>
         (Application.Current?.Windows[0].Page as NavigationPage)?.PushAsync(page) ?? Task.CompletedTask;
 }
@@ -72,17 +245,30 @@ public class LoginPage : ContentPage
         _login.Text = Preferences.Get("SignIn", "");
         if (Preferences.Get("SavePassword", true))
             _password.Text = Preferences.Get("Password", "");
-        Content = new ScrollView
+        _password.ReturnType = ReturnType.Go;
+        _password.Completed += async (_, _) => await SignIn();
+        _message.IsVisible = false;
+        var logo = new Image
         {
-            Content = Ui.Column(
-                new Image { Source = "gpstrainer.png", HeightRequest = 72, WidthRequest = 72 },
-                Ui.Heading(AppStrings.app_name),
-                _login,
-                _password,
-                Ui.Command(AppStrings.login_login_button, SignIn),
-                Ui.Command(AppStrings.signup_button, () => Ui.Push(new SignupPage())),
-                _message)
+            Source = "gpstrainer.png",
+            HeightRequest = 56,
+            WidthRequest = 56,
+            HorizontalOptions = LayoutOptions.Center
         };
+        var heading = Ui.Heading(AppStrings.app_name);
+        heading.FontSize = 22;
+        Content = Ui.AuthForm(
+            this,
+            [logo, heading],
+            [
+                Ui.Labeled(AppStrings.UserName, _login),
+                Ui.Labeled(AppStrings.Password, _password),
+                _message,
+                Ui.Command(AppStrings.login_login_button, SignIn),
+                Ui.Command(AppStrings.signup_button, () => Ui.Push(new SignupPage()))
+            ],
+            [_login, _password],
+            pinToTop: true);
     }
 
     private async Task SignIn()
@@ -94,7 +280,7 @@ public class LoginPage : ContentPage
         var password = _password.Text ?? "";
         if (login.Length == 0)
         {
-            _message.Text = AppStrings.please_enter_your_login_name;
+            ShowMessage(AppStrings.please_enter_your_login_name);
             return;
         }
         try
@@ -116,7 +302,7 @@ public class LoginPage : ContentPage
         }
         catch (Exception ex)
         {
-            _message.Text = AppStrings.no_internet_connection + " " + ex.Message;
+            ShowMessage(AppStrings.no_internet_connection + " " + ex.Message);
         }
 
         if (session.User is null && store.OfflineSignIn(login, password))
@@ -124,7 +310,7 @@ public class LoginPage : ContentPage
 
         if (session.User is null)
         {
-            _message.Text = AppStrings.signin_failed;
+            ShowMessage(AppStrings.signin_failed);
             return;
         }
         if (Preferences.Get("SavePassword", true))
@@ -137,6 +323,12 @@ public class LoginPage : ContentPage
         if (!string.IsNullOrEmpty(token))
             await api.RegisterPushAsync(login, token);
         await Ui.Push(new CourseListPage());
+    }
+
+    private void ShowMessage(string text)
+    {
+        _message.Text = text;
+        _message.IsVisible = text.Length > 0;
     }
 }
 
@@ -153,11 +345,24 @@ public class SignupPage : ContentPage
     public SignupPage()
     {
         Title = AppStrings.signup_button;
-        Content = new ScrollView
-        {
-            Content = Ui.Column(Ui.Heading(AppStrings.signup_button), _login, _password, _email, _first, _last, _phone,
-                Ui.Command(AppStrings.signup_continue_button, Submit), _message)
-        };
+        _message.IsVisible = false;
+        var heading = Ui.Heading(AppStrings.signup_button);
+        heading.FontSize = 22;
+        Content = Ui.AuthForm(
+            this,
+            [heading],
+            [
+                Ui.Labeled(AppStrings.UserName, _login),
+                Ui.Labeled(AppStrings.Password, _password),
+                Ui.Labeled(AppStrings.email, _email),
+                Ui.Labeled(AppStrings.firstName, _first),
+                Ui.Labeled(AppStrings.LastName, _last),
+                Ui.Labeled(AppStrings.phone, _phone),
+                _message,
+                Ui.Command(AppStrings.signup_continue_button, Submit)
+            ],
+            [_login, _password, _email, _first, _last, _phone],
+            pinToTop: false);
     }
 
     private async Task Submit()
@@ -165,6 +370,7 @@ public class SignupPage : ContentPage
         if (!EmailValidator.Validate(_email.Text))
         {
             _message.Text = AppStrings.email;
+            _message.IsVisible = true;
             return;
         }
         var dto = new UserWriteDto
@@ -187,6 +393,7 @@ public class SignupPage : ContentPage
             "DuplicateEmail" => result,
             _ => result
         };
+        _message.IsVisible = !string.IsNullOrEmpty(_message.Text);
         if (result == "ok")
         {
             var account = new UserAccount
@@ -306,7 +513,13 @@ public class CourseEditPage : ContentPage
         var index = codes.ToList().FindIndex(c => c.ActKey == _course.ActivityCode);
         if (index >= 0)
             _activity.SelectedIndex = index;
-        var views = new List<View> { Ui.Heading(Title), _name, _activity, _comments };
+        var views = new List<View>
+        {
+            Ui.Heading(Title),
+            Ui.Labeled(AppStrings.course_name, _name),
+            Ui.Labeled(AppStrings.course_activity, _activity),
+            Ui.Labeled(AppStrings.course_comments, _comments)
+        };
         if (_imported is { Count: > 0 })
         {
             views.Add(new Label
@@ -317,8 +530,7 @@ public class CourseEditPage : ContentPage
             map.Show(_imported.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())));
             views.Add(map);
         }
-        views.Add(Ui.Command(AppStrings.confirm, Save));
-        Content = new ScrollView { Content = Ui.Column(views.ToArray()) };
+        Content = Ui.Form(this, views, [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -493,7 +705,10 @@ public class RaceEditPage : ContentPage
         _race = race;
         Title = AppStrings.menu_edit_race;
         _comments.Text = race.Comments;
-        Content = Ui.Column(Ui.Heading(Title), _comments, Ui.Command(AppStrings.confirm, Save));
+        Content = Ui.Form(
+            this,
+            [Ui.Heading(Title), Ui.Labeled(AppStrings.race_comments, _comments)],
+            [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -512,7 +727,9 @@ public class RaceDetailsPage : ContentPage
     public RaceDetailsPage(Course course, Race race)
     {
         Title = course.Name;
-        Content = Ui.Column(
+        Content = new ScrollView
+        {
+            Content = Ui.Column(
             Ui.Heading(course.Name),
             new Label { Text = race.Comments },
             new Label { Text = Distance.FromKilometers(race.ElapsedDistanceKm).Format(null) },
@@ -531,7 +748,8 @@ public class RaceDetailsPage : ContentPage
                 store.Database.DeleteRace(race.RaceId);
                 store.Database.RecordAction(ActionType.DeleteRace, race.RaceId);
                 await Navigation.PopAsync();
-            }));
+            }))
+        };
     }
 }
 
@@ -568,8 +786,12 @@ public class StagingPage : ContentPage
             _startLongitude = start.Longitude;
             _distance.Text = "Waiting for GPS";
         }
-        Content = Ui.Column(Ui.Heading(course.Name), new Label { Text = "Distance to start" }, _distance, map,
-            Ui.Command(AppStrings.start, Start));
+        _distance.FontSize = 22;
+        Content = new ScrollView
+        {
+            Content = Ui.Column(Ui.Heading(course.Name), new Label { Text = "Distance to start" }, _distance, map,
+                Ui.Command(AppStrings.start, Start))
+        };
     }
 
     protected override async void OnAppearing()
@@ -716,19 +938,20 @@ public class RunningPage : ContentPage
     private static Label ReadoutValue(string text) => new()
     {
         Text = text,
-        FontSize = 32,
+        FontSize = 26,
         FontAttributes = FontAttributes.Bold,
         HorizontalTextAlignment = TextAlignment.End,
-        HorizontalOptions = LayoutOptions.Fill
+        HorizontalOptions = LayoutOptions.Fill,
+        LineBreakMode = LineBreakMode.NoWrap
     };
 
     private static Label ReadoutUnit(string text) => new()
     {
         Text = text,
-        FontSize = 22,
+        FontSize = 16,
         FontAttributes = FontAttributes.Bold,
-        WidthRequest = 78,
-        VerticalOptions = LayoutOptions.End
+        WidthRequest = 64,
+        VerticalOptions = LayoutOptions.Center
     };
 
     private static Grid ReadoutRow(string caption, Label value, Label unit)
@@ -741,9 +964,10 @@ public class RunningPage : ContentPage
                 new ColumnDefinition(GridLength.Star),
                 new ColumnDefinition(GridLength.Auto)
             },
-            ColumnSpacing = 8
+            ColumnSpacing = 8,
+            MinimumHeightRequest = 48
         };
-        grid.Add(new Label { Text = caption, FontSize = 28, VerticalOptions = LayoutOptions.Center }, 0, 0);
+        grid.Add(new Label { Text = caption, FontSize = 18, VerticalOptions = LayoutOptions.Center, LineBreakMode = LineBreakMode.NoWrap }, 0, 0);
         grid.Add(value, 1, 0);
         grid.Add(unit, 2, 0);
         return grid;
@@ -1047,32 +1271,20 @@ public class MapCoursePage : ContentPage
         _map.WaypointTapped += (_, tap) => _ = OnTap(tap.Latitude, tap.Longitude);
         _undo.Clicked += (_, _) => Undo();
 
-        var followRow = new HorizontalStackLayout
+        _map.HeightRequest = 280;
+        _map.HorizontalOptions = LayoutOptions.Fill;
+        _undo.HorizontalOptions = LayoutOptions.Fill;
+        Content = new ScrollView
         {
-            Spacing = 8,
-            Children =
-            {
-                _follow,
-                new Label { Text = "Follow roads", VerticalOptions = LayoutOptions.Center }
-            }
+            Content = Ui.Column(
+                Ui.Heading("Map mode"),
+                new Label { Text = "Tap the map to add a waypoint. The line from the previous point follows roads when that switch is on." },
+                Ui.SwitchRow("Follow roads", null, _follow),
+                _type,
+                _notice,
+                _map,
+                _undo)
         };
-        var header = Ui.Column(
-            Ui.Heading("Map mode"),
-            new Label { Text = "Tap the map to add a waypoint. The line from the previous point follows roads when that switch is on." },
-            followRow,
-            _type,
-            _notice);
-        header.Padding = 12;
-        var grid = new Grid
-        {
-            RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
-            RowSpacing = 8
-        };
-        grid.Add(header);
-        grid.Add(_map, 0, 1);
-        var undoRow = new VerticalStackLayout { Padding = 12, Children = { _undo } };
-        grid.Add(undoRow, 0, 2);
-        Content = grid;
         Redraw();
     }
 
@@ -1185,7 +1397,14 @@ public class InsertWaypointPage : ContentPage
         foreach (var type in Enum.GetValues<WaypointType>())
             _type.Items.Add(type.ToString());
         _type.SelectedIndex = (int)WaypointType.TurnLeft;
-        Content = Ui.Column(Ui.Heading("Waypoint"), _type, _description, Ui.Command(AppStrings.confirm, Save));
+        Content = Ui.Form(
+            this,
+            [
+                Ui.Heading("Waypoint"),
+                Ui.Labeled("Waypoint", _type),
+                Ui.Labeled("Description", _description)
+            ],
+            [Ui.Command(AppStrings.confirm, Save)]);
     }
 
     private async Task Save()
@@ -1221,6 +1440,7 @@ public class PreferencesPage : ContentPage
     public PreferencesPage()
     {
         Title = AppStrings.menu_options;
+        Ui.KeepAboveKeyboard(this);
         var layout = Ui.Column(Ui.Heading(AppStrings.menu_options));
         var metric = new Switch
         {
@@ -1232,21 +1452,18 @@ public class PreferencesPage : ContentPage
             foreach (var sport in PreferenceCatalog.Sports)
                 Preferences.Set(sport + "Units", value);
         };
-        layout.Add(metric);
-        layout.Add(new Label { Text = "Metric units (kilometers and kph). Off uses miles and mph." });
+        layout.Add(Ui.SwitchRow("Metric units (kilometers and kph).", "Off uses miles and mph.", metric));
         foreach (var pref in PreferenceCatalog.Core())
         {
             if (pref.DefaultValue is "true" or "false")
             {
                 var key = pref.Key;
-                layout.Add(new Switch
+                var toggle = new Switch
                 {
                     IsToggled = Preferences.Get(key, pref.DefaultValue == "true")
-                });
-                var caption = new Label { Text = pref.Summary };
-                var toggle = (Switch)layout.Children[^1];
+                };
                 toggle.Toggled += (_, _) => Preferences.Set(key, toggle.IsToggled);
-                layout.Add(caption);
+                layout.Add(Ui.SwitchRow(pref.Summary, null, toggle));
             }
             else
             {
@@ -1262,7 +1479,7 @@ public class PreferencesPage : ContentPage
         var api = Ui.Box("API base URL");
         api.Text = ApiAddress.Current;
         api.Unfocused += (_, _) => Preferences.Set(ApiAddress.PreferenceKey, api.Text ?? "");
-        layout.Add(api);
+        layout.Add(Ui.Labeled("API base URL", api));
         layout.Add(Ui.Heading("Delete account"));
         layout.Add(new Label
         {
@@ -1343,31 +1560,60 @@ public class PreferencesPage : ContentPage
 
     private static void AddPreference(VerticalStackLayout layout, string key, string fallback)
     {
-        layout.Add(new Label { Text = key });
         var entry = Ui.Box(key);
         entry.Text = Preferences.Get(key, fallback);
         entry.Unfocused += (_, _) => Preferences.Set(key, string.IsNullOrWhiteSpace(entry.Text) ? fallback : entry.Text.Trim());
-        layout.Add(entry);
+        layout.Add(Ui.Labeled(key, entry));
     }
 }
 
 public class GpsInfoPage : ContentPage
 {
-    private readonly Label _body = new();
+    private readonly IGpsInfoFeed _feed;
+    private readonly Label _message = new() { LineBreakMode = LineBreakMode.WordWrap };
+    private readonly VerticalStackLayout _rows = new() { Spacing = 2 };
+    private readonly Button _settings = new() { Text = GpsInfoText.OpenSettings, IsVisible = false };
 
     public GpsInfoPage()
     {
         Title = AppStrings.menu_gps_info;
-        Content = Ui.Column(Ui.Heading(AppStrings.menu_gps_info), _body);
+        _feed = Services.Current.GetRequiredService<IGpsInfoFeed>();
+        _settings.Clicked += (_, _) => _feed.OpenSettings();
+        Content = new ScrollView
+        {
+            Content = Ui.Column(Ui.Heading(AppStrings.menu_gps_info), _message, _rows, _settings)
+        };
     }
 
     protected override void OnAppearing()
     {
         base.OnAppearing();
-        var run = Services.Current.GetRequiredService<RunSession>();
-        _body.Text = run.Latitude is null
-            ? AppStrings.WaitingForGpsData
-            : $"{run.Latitude:0.00000}, {run.Longitude:0.00000}\n±{run.AccuracyMeters:0} m";
+        _feed.Updated += OnUpdate;
+        _ = _feed.StartAsync();
+    }
+
+    protected override void OnDisappearing()
+    {
+        _feed.Updated -= OnUpdate;
+        _feed.Stop();
+        base.OnDisappearing();
+    }
+
+    private void OnUpdate(object? sender, GpsInfoUpdate update)
+    {
+        MainThread.BeginInvokeOnMainThread(() => Show(update));
+    }
+
+    private void Show(GpsInfoUpdate update)
+    {
+        var metric = SportUnits.IsMetric(Preferences.Get("DefaultSport", "Cycling"), key => Preferences.Get(key, ""));
+        var view = GpsInfoText.Present(update.Blocker, update.Sample, metric);
+        _message.Text = view.Message;
+        _message.IsVisible = view.Message.Length > 0;
+        _settings.IsVisible = view.ShowSettings;
+        _rows.Clear();
+        foreach (var row in view.Rows)
+            _rows.Add(Ui.FactRow(row.Label, row.Value));
     }
 }
 
@@ -1378,11 +1624,14 @@ public class DataPage : ContentPage
     public DataPage()
     {
         Title = AppStrings.menu_data;
-        Content = Ui.Column(
-            Ui.Heading(AppStrings.menu_data),
-            Ui.Command(AppStrings.data_button_sync, Sync),
-            Ui.Command(AppStrings.data_button_compact, Compact),
-            _status);
+        Content = new ScrollView
+        {
+            Content = Ui.Column(
+                Ui.Heading(AppStrings.menu_data),
+                Ui.Command(AppStrings.data_button_sync, Sync),
+                Ui.Command(AppStrings.data_button_compact, Compact),
+                _status)
+        };
     }
 
     private async Task Sync()
@@ -1419,10 +1668,14 @@ public class AboutPage : ContentPage
             }
         };
         icon.GestureRecognizers.Add(tap);
-        Content = Ui.Column(icon, Ui.Heading(AppStrings.app_name),
-            new Label { Text = AppStrings.rev + " 1.46" },
-            new Label { Text = AppStrings.build + " 20131013" },
-            new Label { Text = AppStrings.peak_software });
+        icon.HorizontalOptions = LayoutOptions.Center;
+        Content = new ScrollView
+        {
+            Content = Ui.Column(icon, Ui.Heading(AppStrings.app_name),
+                new Label { Text = AppStrings.rev + " 1.46" },
+                new Label { Text = AppStrings.build + " 20131013" },
+                new Label { Text = AppStrings.peak_software, LineBreakMode = LineBreakMode.WordWrap })
+        };
     }
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tap the sign-in form, then open New Course. Screenshots stay under android-screenshots/."""
+"""Sign in and screenshot each reachable Android page, including Settings and GPS Info."""
 
 import re
 import subprocess
@@ -89,8 +89,82 @@ def dismiss_permissions(root: ET.Element | None) -> bool:
     return False
 
 
+def box(node: ET.Element) -> tuple[int, int, int, int] | None:
+    bounds = node.attrib.get("bounds") or ""
+    match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def content_viewport(root: ET.Element | None) -> tuple[int, int, int, int]:
+    best: tuple[int, int, int, int] | None = None
+    for node in nodes(root):
+        if not node.attrib.get("class", "").endswith("ScrollView"):
+            continue
+        bounds = box(node)
+        if bounds is None or bounds[1] <= 0 or bounds[3] <= bounds[1]:
+            continue
+        if best is None or (bounds[3] - bounds[1]) < (best[3] - best[1]):
+            best = bounds
+    return best or (0, 80, 320, 640)
+
+
+def visible_in(node: ET.Element | None, viewport: tuple[int, int, int, int]) -> bool:
+    if node is None:
+        return False
+    bounds = box(node)
+    if bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+        return False
+    height = bounds[3] - bounds[1]
+    overlap = min(bounds[3], viewport[3]) - max(bounds[1], viewport[1])
+    return overlap >= height * 0.85
+
+
+def swipe_viewport(viewport: tuple[int, int, int, int], direction: int) -> None:
+    x = (viewport[0] + viewport[2]) // 2
+    top = min(viewport[1] + 24, viewport[3] - 30)
+    bottom = max(top + 36, viewport[3] - 16)
+    if direction < 0:
+        sh("adb", "shell", "input", "swipe", str(x), str(bottom), str(x), str(top), "250")
+    else:
+        sh("adb", "shell", "input", "swipe", str(x), str(top), str(x), str(bottom), "250")
+    time.sleep(0.45)
+
+
+def reveal(hint: str, also: str | None = None) -> ET.Element | None:
+    """Scroll until the named field is on screen. `also` must be on screen too."""
+    for _ in range(8):
+        root = dump("reveal.xml")
+        if root is None:
+            return None
+        viewport = content_viewport(root)
+        field = find_field(root, hint)
+        if field is None:
+            matches = [node for node in nodes(root) if label(node) == hint]
+            field = matches[0] if matches else None
+        also_node = None
+        if also:
+            for node in nodes(root):
+                if label(node) == also:
+                    also_node = node
+                    break
+        if visible_in(field, viewport) and (also is None or visible_in(also_node, viewport)):
+            return field
+        bounds = box(field) if field is not None else None
+        if bounds is None or bounds[3] <= bounds[1] or bounds[1] >= viewport[3] - 4:
+            swipe_viewport(viewport, -1)
+        elif bounds[3] <= viewport[1] + 4 or (also and not visible_in(also_node, viewport)):
+            swipe_viewport(viewport, 1)
+        else:
+            swipe_viewport(viewport, -1)
+    return None
+
+
 def type_into(root: ET.Element | None, hint: str, value: str) -> bool:
-    field = find(root, hint)
+    field = find_field(root, hint)
+    if field is None or not visible_in(field, content_viewport(root)):
+        field = reveal(hint)
     if field is None:
         fields = [node for node in nodes(root) if node.attrib.get("class", "").endswith("EditText")]
         if hint.lower().startswith("password") and len(fields) >= 2:
@@ -99,12 +173,61 @@ def type_into(root: ET.Element | None, hint: str, value: str) -> bool:
             field = fields[0]
     if not tap(field):
         return False
-    sh("adb", "shell", "input", "text", value)
+    sh("adb", "shell", "input", "text", value.replace(" ", "%s"))
     time.sleep(0.4)
     return True
 
 
+def find_field(root: ET.Element | None, hint: str) -> ET.Element | None:
+    fields = [node for node in nodes(root) if node.attrib.get("class", "").endswith("EditText")]
+    for node in fields:
+        if hint.lower() in label(node).lower():
+            return node
+    return None
+
+
+def back() -> None:
+    sh("adb", "shell", "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(0.8)
+
+
+def open_overflow(root: ET.Element | None) -> bool:
+    for caption in ("More options", "More", "Overflow"):
+        if tap(find(root, caption)):
+            return True
+    for node in nodes(root):
+        desc = (node.attrib.get("content-desc") or "").lower()
+        if "more" in desc or "overflow" in desc:
+            return tap(node)
+    return False
+
+
+def open_toolbar(title: str) -> bool:
+    root = dump("toolbar.xml")
+    if find(root, title) is not None:
+        return tap(find(root, title))
+    if not open_overflow(root):
+        return False
+    time.sleep(0.6)
+    root = dump("toolbar-open.xml")
+    return tap(find(root, title))
+
+
+def visit(title: str, image: str) -> bool:
+    if not open_toolbar(title):
+        print(f"Could not open {title}.")
+        shot(image)
+        return False
+    time.sleep(1.2)
+    shot(image)
+    back()
+    return True
+
+
 def main() -> int:
+    sh("adb", "shell", "pm", "grant", "com.peakSwc.gpsTrainer", "android.permission.ACCESS_FINE_LOCATION")
+    sh("adb", "shell", "pm", "grant", "com.peakSwc.gpsTrainer", "android.permission.ACCESS_COARSE_LOCATION")
+    sh("adb", "emu", "geo", "fix", "-105.27", "40.015", "1650")
     root = dump("sign-in.xml")
     for _ in range(3):
         if not dismiss_permissions(root):
@@ -112,16 +235,44 @@ def main() -> int:
         time.sleep(1)
         root = dump("sign-in.xml")
     shot("sign-in.png")
+    if tap(find(root, "Sign up for a login")):
+        time.sleep(1)
+        shot("signup.png")
+        back()
+        root = dump("sign-in.xml")
+    else:
+        print("Could not open Sign up.")
+        shot("signup.png")
 
     if not type_into(root, "User Name:", LOGIN):
         print("Could not find the user name field.")
         return 1
-    root = dump("password.xml")
-    if not type_into(root, "Password:", PASSWORD):
-        print("Could not find the password field.")
+    # The logo collapses once a field is focused. Wait, then scroll Password into view.
+    time.sleep(0.8)
+    password = reveal("Password:", also="User Name:")
+    if password is None:
+        print("Password was not on screen with the keyboard open.")
+        shot("sign-in-keyboard.png")
         return 1
-    root = dump("login.xml")
-    if not tap(find(root, "Login")):
+    if not tap(password):
+        print("Could not focus the password field.")
+        shot("sign-in-keyboard.png")
+        return 1
+    sh("adb", "shell", "input", "text", PASSWORD.replace(" ", "%s"))
+    time.sleep(0.6)
+    root = dump("sign-in-keyboard.xml")
+    shot("sign-in-keyboard.png")
+    viewport = content_viewport(root)
+    user_label = next((node for node in nodes(root) if label(node) == "User Name:"), None)
+    password_label = next((node for node in nodes(root) if label(node) == "Password:"), None)
+    if not visible_in(user_label, viewport) or not visible_in(password_label, viewport):
+        print("User Name and Password were not both visible with the keyboard open.")
+        print(f"  viewport={viewport}")
+        print(f"  user={user_label.attrib.get('bounds') if user_label is not None else 'missing'}")
+        print(f"  password={password_label.attrib.get('bounds') if password_label is not None else 'missing'}")
+        return 1
+    login = reveal("Login")
+    if not tap(login):
         print("Could not find the Login button.")
         return 1
     time.sleep(8)
@@ -129,14 +280,117 @@ def main() -> int:
     shot("courses.png")
     if find(root, "Courses") is None and find(root, "New Course") is None:
         print("Sign-in did not reach the course list.")
+        login = find(root, "Login")
+        print(f"  Login bounds={login.attrib.get('bounds') if login is not None else 'missing'}")
+        for node in nodes(root):
+            if node.attrib.get("password") == "true":
+                print(f"  password text length={len(node.attrib.get('text') or '')} bounds={node.attrib.get('bounds')}")
+        shown = sh("adb", "shell", "dumpsys", "input_method")
+        for line in shown.splitlines():
+            if "mInputShown" in line or "mImeWindowVis" in line or "imeFrame" in line or "mVisible" in line:
+                print(" ", line.strip())
         return 1
+
+    menu_ok = True
+    for title, image in (
+        ("Settings", "settings.png"),
+        ("Data", "data.png"),
+        ("GPS Info", "gps-info.png"),
+        ("About", "about.png"),
+    ):
+        menu_ok = visit(title, image) and menu_ok
+    if not menu_ok:
+        print("A toolbar page was not captured.")
+        return 1
+
+    # Give the GPS page a moment after the injected fix, then capture it again.
+    if open_toolbar("GPS Info"):
+        for _ in range(8):
+            time.sleep(1)
+            root = dump("gps-info.xml")
+            if find(root, "Latitude") is not None or find(root, "40.015") is not None:
+                break
+        shot("gps-info.png")
+        back()
+
+    root = dump("courses.xml")
     if not tap(find(root, "New Course")):
         print("The course list was visible, but New Course was not.")
         return 1
-    time.sleep(3)
+    time.sleep(1)
     shot("course.png")
-    print("Captured sign-in, course list, and new-course screens.")
+    root = dump("new-course.xml")
+    if type_into(root, "Name:", "Smoke"):
+        sh("adb", "shell", "input", "keyevent", "111")
+        time.sleep(0.4)
+        root = dump("new-course.xml")
+        if tap(find(root, "OK")):
+            time.sleep(2)
+            root = dump("courses.xml")
+            shot("courses.png")
+            if tap(find(root, "Smoke")):
+                time.sleep(1.5)
+                shot("course-details.png")
+                root = dump("course-details.xml")
+                if tap(find(root, "Map mode")):
+                    time.sleep(2)
+                    shot("map.png")
+                    back()
+                    root = dump("course-details.xml")
+                if tap(find(root, "Learning mode")):
+                    time.sleep(1)
+                    shot("running.png")
+                    root = dump("running.xml")
+                    if tap(find(root, "Allow")):
+                        time.sleep(2)
+                        shot("running.png")
+                        root = dump("running.xml")
+                        if tap(find(root, "Add Waypoint")):
+                            time.sleep(1)
+                            shot("insert-waypoint.png")
+                            back()
+                    back()
+                    root = dump("course-details.xml")
+                if tap(find(root, "Races")):
+                    time.sleep(1)
+                    shot("races.png")
+                    root = dump("races.xml")
+                    if tap(find(root, "New race")):
+                        time.sleep(1)
+                        shot("race-edit.png")
+                        root = dump("race-edit.xml")
+                        if tap(find(root, "OK")):
+                            time.sleep(1)
+                            root = dump("races.xml")
+                            shot("races.png")
+                            race = find_button(root)
+                            if race is not None and "New race" not in label(race):
+                                tap(race)
+                                time.sleep(1)
+                                shot("race-details.png")
+                                root = dump("race-details.xml")
+                                if tap(find(root, "Stage")):
+                                    time.sleep(1.5)
+                                    shot("staging.png")
+                                    root = dump("staging.xml")
+                                    if tap(find(root, "Start")):
+                                        time.sleep(1.5)
+                                        shot("running.png")
+                                        back()
+                                    back()
+                back()
+    print("Captured sign-in, signup, courses, settings, data, GPS info, about, and new course.")
     return 0
+
+
+def find_button(root: ET.Element | None) -> ET.Element | None:
+    for node in nodes(root):
+        if not node.attrib.get("class", "").endswith("Button"):
+            continue
+        text = label(node)
+        if text and text not in ("New race", "OK", "Cancel"):
+            return node
+    return None
 
 
 if __name__ == "__main__":

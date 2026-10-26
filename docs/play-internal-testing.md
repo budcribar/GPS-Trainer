@@ -104,7 +104,7 @@ Stay on the dashboard. Under **Policy and programs** or the **App content** list
 2. App name: `gpsTrainer`.
 3. Short description (68 characters): `Define courses, set pace goals, and hear if you are ahead or behind.`
 4. Full description: paste the full description from `listing.md`.
-5. Upload `/opt/cursor/artifacts/play-store/icon-512.png` as the app icon (512×512).
+5. Upload the 512×512 icon. The copy that matches the Android adaptive icon is `src/GpsTrainer.App/Resources/AppIcon/icon-512.png`. An older export may still be at `/opt/cursor/artifacts/play-store/icon-512.png`; use the repo file so the store listing matches the launcher.
 6. Upload `/opt/cursor/artifacts/play-store/feature-graphic-1024x500.png` as the feature graphic (1024×500).
 7. Upload at least two phone screenshots, 1080×1920, from `/opt/cursor/artifacts/play-store/`. Suggested order: sign-in, the location disclosure, a course list, a ride. Do not upload a mock.
 8. Category: **Health & Fitness**.

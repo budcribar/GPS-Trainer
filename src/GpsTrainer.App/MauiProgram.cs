@@ -26,8 +26,10 @@ public static class MauiProgram
 		builder.Services.AddSingleton<TrackingHost>();
 #if ANDROID
 		builder.Services.AddSingleton<IBluetoothDevices, AndroidBluetooth>();
+		builder.Services.AddSingleton<IGpsInfoFeed, AndroidGpsInfoFeed>();
 #elif IOS
 		builder.Services.AddSingleton<IBluetoothDevices, IosBluetooth>();
+		builder.Services.AddSingleton<IGpsInfoFeed, IosGpsInfoFeed>();
 #else
 		builder.Services.AddSingleton<IBluetoothDevices, UnavailableBluetooth>();
 #endif
