@@ -5,6 +5,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/android-screenshots"
 mkdir -p "$out"
+cp "$root/src/GpsTrainer.App/Resources/AppIcon/launcher-circle.png" "$out/launcher-circle.png"
+cp "$root/src/GpsTrainer.App/Resources/AppIcon/launcher-squircle.png" "$out/launcher-squircle.png"
 apk="$(find "$root/src/GpsTrainer.App/bin/Debug" -name '*.apk' | head -n 1)"
 if [[ -z "${apk}" ]]; then
   echo "No debug APK was built."
