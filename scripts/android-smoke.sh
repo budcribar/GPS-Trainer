@@ -17,6 +17,7 @@ sleep 12
 adb exec-out screencap -p > "$out/sign-in.png"
 adb shell uiautomator dump /sdcard/uidump.xml || true
 adb pull /sdcard/uidump.xml "$out/sign-in.xml" || true
+adb logcat -d -t 500 > "$out/logcat.txt" || true
 
 set +e
 python3 "$root/scripts/android-drive.py" "$out"
@@ -25,6 +26,10 @@ set -e
 adb exec-out screencap -p > "$out/after-drive.png"
 if [[ ! -f "$out/course.png" ]]; then
   echo "The course screen was not reached. Sign-in screenshot is in android-screenshots/sign-in.png."
+  if [[ -f "$out/logcat.txt" ]]; then
+    echo "---- crash log ----"
+    grep -E "FATAL EXCEPTION|AndroidRuntime|dotnet|monodroid|gpsTrainer keeps" "$out/logcat.txt" | tail -n 80 || true
+  fi
   exit "${status:-1}"
 fi
 exit 0
