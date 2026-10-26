@@ -4,6 +4,7 @@ using Android.Locations;
 using Android.OS;
 using Android.Provider;
 using AndroidX.Core.Content;
+using AndroidLocation = Android.Locations.Location;
 using AUri = Android.Net.Uri;
 
 namespace GpsTrainer.App;
@@ -20,7 +21,7 @@ public sealed class AndroidGpsInfoFeed : IGpsInfoFeed
     private GpsInfoListener? _listener;
     private SatelliteCallback? _satellites;
     private Timer? _simulator;
-    private Location? _last;
+    private AndroidLocation? _last;
     private int _generation;
     private GpsInfoBlocker _blocker;
     private int _inView;
@@ -143,7 +144,7 @@ public sealed class AndroidGpsInfoFeed : IGpsInfoFeed
         }
     }
 
-    private void OnLocation(Location location)
+    private void OnLocation(AndroidLocation location)
     {
         _last = location;
         var used = _used;
@@ -223,9 +224,9 @@ public sealed class AndroidGpsInfoFeed : IGpsInfoFeed
         }
     }
 
-    private static Location? BestLastKnown(LocationManager manager, bool fine)
+    private static AndroidLocation? BestLastKnown(LocationManager manager, bool fine)
     {
-        Location? best = null;
+        AndroidLocation? best = null;
         foreach (var provider in Candidates(fine))
         {
             if (string.IsNullOrEmpty(provider))
@@ -280,11 +281,11 @@ public sealed class AndroidGpsInfoFeed : IGpsInfoFeed
 
 sealed class GpsInfoListener : Java.Lang.Object, ILocationListener
 {
-    private readonly Action<Location> _onLocation;
+    private readonly Action<AndroidLocation> _onLocation;
 
-    public GpsInfoListener(Action<Location> onLocation) => _onLocation = onLocation;
+    public GpsInfoListener(Action<AndroidLocation> onLocation) => _onLocation = onLocation;
 
-    public void OnLocationChanged(Location location) => _onLocation(location);
+    public void OnLocationChanged(AndroidLocation location) => _onLocation(location);
 
     public void OnProviderDisabled(string provider)
     {

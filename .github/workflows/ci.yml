@@ -126,6 +126,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Stage launcher screenshots
+        run: |
+          mkdir -p android-screenshots
+          cp src/GpsTrainer.App/Resources/AppIcon/launcher-circle.png android-screenshots/launcher-circle.png
+          cp src/GpsTrainer.App/Resources/AppIcon/launcher-squircle.png android-screenshots/launcher-squircle.png
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
