@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const dotnet = process.env.DOTNET ?? `${process.env.HOME}/.dotnet/dotnet`;
+const dotnet = process.env.DOTNET ?? "dotnet";
 
 export default defineConfig({
   testDir: ".",
