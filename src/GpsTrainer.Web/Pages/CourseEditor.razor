@@ -583,6 +583,7 @@
         if ((uint)index >= (uint)waypoints.Count)
         {
             message = "That waypoint is not on the course.";
+            StateHasChanged();
             return;
         }
         waypoints[index].TextDescription = text ?? "";
@@ -889,6 +890,7 @@
         if (!sketch.Undo())
         {
             message = "Nothing to undo.";
+            StateHasChanged();
             return;
         }
         message = "Removed the last segment.";
@@ -1140,6 +1142,8 @@
                 }
                 course.ElapsedDistanceKm = distance;
             }
+            else
+                course.ElapsedDistanceKm = waypoints.Max(wp => wp.ElapsedDistanceKm);
             savedWaypoints = await Api.SaveWaypointsAsync(course.CourseId, waypoints);
             await Api.SaveCourseAsync(course);
         }

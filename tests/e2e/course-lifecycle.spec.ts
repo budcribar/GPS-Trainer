@@ -12,7 +12,6 @@ import {
 } from "./editor.helpers";
 
 test("undo on an empty course says there is nothing to undo", async ({ page }) => {
-  test.fail(true, "Known bug: Ctrl-Z on an empty course never shows Nothing to undo.");
   await openEditor(page);
   await closeHelp(page);
   await page.locator(".map-credit").click();
@@ -21,7 +20,6 @@ test("undo on an empty course says there is nothing to undo", async ({ page }) =
 });
 
 test("saving turn text from the map popup reports that it was saved", async ({ page }) => {
-  test.fail(true, "Known bug: the turn popup Save click never reaches the page, so the text is not saved.");
   await openEditor(page);
   await closeHelp(page);
   await drawTwoPoints(page);

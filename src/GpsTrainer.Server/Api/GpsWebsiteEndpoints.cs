@@ -36,11 +36,13 @@ public static partial class GpsEndpoints
             if (!TryLogin(http, config, out var login))
                 return Results.Unauthorized();
             var user = await db.Users.FindAsync(login);
-            if (user is null || !PasswordHasher.Verify(body.CurrentPassword, user.PasswordHash))
+            var current = body.CurrentPassword?.TrimEnd() ?? "";
+            var next = body.NewPassword?.TrimEnd() ?? "";
+            if (user is null || !PasswordHasher.Verify(current, user.PasswordHash))
                 return Results.Unauthorized();
-            if (string.IsNullOrWhiteSpace(body.NewPassword))
+            if (string.IsNullOrWhiteSpace(next))
                 return Results.BadRequest();
-            user.PasswordHash = PasswordHasher.Hash(body.NewPassword);
+            user.PasswordHash = PasswordHasher.Hash(next);
             user.UserTimestamp = DateTime.UtcNow;
             await db.SaveChangesAsync();
             return Results.NoContent();
@@ -81,14 +83,17 @@ public static partial class GpsEndpoints
             var user = await db.Users.FindAsync(body.Login);
             if (user is null)
                 return Results.Unauthorized();
-            user.PasswordHash = PasswordHasher.Hash(body.NewPassword);
+            user.PasswordHash = PasswordHasher.Hash(body.NewPassword.TrimEnd());
             db.PasswordResets.RemoveRange(db.PasswordResets.Where(r => r.Login == body.Login));
             await db.SaveChangesAsync();
             return Results.NoContent();
         });
 
-        api.MapGet("/courses/{id:guid}/intervals", async (Guid id, GpsTrainerDb db) =>
+        api.MapGet("/courses/{id:guid}/intervals", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
+            var course = await db.Courses.FindAsync(id);
+            if (course is not null && !CanReadCourse(http, config, course))
+                return Results.NotFound();
             var stored = await db.CourseIntervals.Where(i => i.CourseId == id).OrderBy(i => i.Ordinal).ToListAsync();
             if (stored.Count > 0)
                 return Results.Ok(stored.Select(row => ToDto(ToDefinition(row))));
@@ -98,6 +103,9 @@ public static partial class GpsEndpoints
 
         api.MapGet("/courses/{id:guid}/interval-results", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
+            var course = await db.Courses.FindAsync(id);
+            if (course is not null && !CanReadCourse(http, config, course))
+                return Results.NotFound();
             var waypoints = await LoadWaypoints(db, id);
             var stored = await db.CourseIntervals.Where(i => i.CourseId == id).OrderBy(i => i.Ordinal).ToListAsync();
             var pairs = stored.Count > 0
@@ -158,8 +166,11 @@ public static partial class GpsEndpoints
             return Results.Ok(new ValidationResultDto { Ok = message is null, Message = message ?? "" });
         });
 
-        api.MapGet("/courses/{id:guid}/waypoints/essential", async (Guid id, GpsTrainerDb db) =>
+        api.MapGet("/courses/{id:guid}/waypoints/essential", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
+            var course = await db.Courses.FindAsync(id);
+            if (course is not null && !CanReadCourse(http, config, course))
+                return Results.NotFound();
             var waypoints = await LoadWaypoints(db, id);
             return Results.Ok(CourseRules.Essential(waypoints));
         });
@@ -590,7 +601,7 @@ public static partial class GpsEndpoints
         Longitude = wp.Longitude,
         Heading = wp.HeadingDegrees,
         WaypointType = (int)type,
-        AltitudeKm = wp.AltitudeKm == 0 ? Altitude.Unknown.Kilometers : wp.AltitudeKm,
+        AltitudeKm = wp.AltitudeKm,
         ElapsedDistanceKm = wp.ElapsedDistanceKm,
         TextDescription = wp.TextDescription
     };

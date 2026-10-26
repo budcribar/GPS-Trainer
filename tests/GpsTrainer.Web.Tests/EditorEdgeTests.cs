@@ -52,7 +52,6 @@ public sealed class EditorEdgeTests : TestContext
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Ctrl_Z_on_an_empty_course_says_there_is_nothing_to_undo()
     {
         var cut = Render();
@@ -110,7 +109,6 @@ public sealed class EditorEdgeTests : TestContext
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Saving_after_an_interval_keeps_the_course_distance()
     {
         var cut = Render();

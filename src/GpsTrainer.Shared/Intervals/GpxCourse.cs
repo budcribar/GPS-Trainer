@@ -37,6 +37,29 @@ public static class GpxCourse
         return Math.Clamp(meters, MinToleranceMeters, MaxToleranceMeters);
     }
 
+    // Elapsed distance is the route order. A point added after that distance was
+    // stamped can still be stored with elapsed 0, and sorting on elapsed alone
+    // pulls it back to the start. Those points stay in timestamp order instead.
+    private static List<Waypoint> OrderForExport(IReadOnlyList<Waypoint> waypoints)
+    {
+        var latestProgressTick = waypoints.Where(w => w.ElapsedDistanceKm > 0).Select(w => (long?)w.TimestampTicks).Max();
+        return waypoints
+            .OrderBy(w => ExportPosition(w, latestProgressTick))
+            .ThenBy(w => w.TimestampTicks)
+            .ToList();
+    }
+
+    private static double ExportPosition(Waypoint waypoint, long? latestProgressTick)
+    {
+        if (waypoint.ElapsedDistanceKm > 0)
+            return waypoint.ElapsedDistanceKm;
+        if (waypoint.WaypointType is WaypointType.StartInterval or WaypointType.FinishInterval)
+            return waypoint.ElapsedDistanceKm;
+        if (latestProgressTick is long progressed && waypoint.TimestampTicks > progressed)
+            return double.MaxValue;
+        return 0;
+    }
+
     public static WaypointType ClassifyTurn(double signedDegrees)
     {
         var abs = Math.Abs(signedDegrees);
@@ -54,7 +77,7 @@ public static class GpxCourse
     {
         var gpx = XNamespace.Get(GpxNamespace);
         var gpst = XNamespace.Get(ExtensionNamespace(publicBaseUrl));
-        var ordered = waypoints.OrderBy(w => w.ElapsedDistanceKm).ThenBy(w => w.TimestampTicks).ToList();
+        var ordered = OrderForExport(waypoints);
         var totals = Measure(ordered);
         var track = new XElement(gpx + "trk",
             new XElement(gpx + "name", courseName),
@@ -354,7 +377,7 @@ public static class GpxCourse
 
     private static List<Waypoint> BuildWaypoints(List<RawPoint> points)
     {
-        var smoothed = Smooth(points.Select(point => point.AltitudeMeters).ToArray());
+        var smoothed = Smooth(points.Select(point => point.HasAltitude ? point.AltitudeMeters : double.NaN).ToArray());
         var waypoints = new List<Waypoint>(points.Count);
         var elapsed = 0.0;
         for (var i = 0; i < points.Count; i++)
@@ -376,7 +399,7 @@ public static class GpxCourse
             {
                 Latitude = points[i].Latitude,
                 Longitude = points[i].Longitude,
-                AltitudeKm = smoothed[i] / 1000.0,
+                AltitudeKm = double.IsNaN(smoothed[i]) ? Altitude.Unknown.Kilometers : smoothed[i] / 1000.0,
                 ElapsedDistanceKm = elapsed,
                 HeadingDegrees = heading,
                 WaypointType = type,
@@ -502,7 +525,21 @@ public static class GpxCourse
             return meters;
         var smoothed = (double[])meters.Clone();
         for (var i = 1; i < meters.Length - 1; i++)
-            smoothed[i] = (meters[i - 1] + meters[i] + meters[i + 1]) / 3.0;
+        {
+            if (double.IsNaN(meters[i]))
+                continue;
+            double sum = 0;
+            var count = 0;
+            for (var j = i - 1; j <= i + 1; j++)
+            {
+                if (double.IsNaN(meters[j]))
+                    continue;
+                sum += meters[j];
+                count++;
+            }
+            if (count > 0)
+                smoothed[i] = sum / count;
+        }
         return smoothed;
     }
 
@@ -538,10 +575,14 @@ public static class GpxCourse
         var latitude = double.Parse(Required(point, "lat"), CultureInfo.InvariantCulture);
         var longitude = double.Parse(Required(point, "lon"), CultureInfo.InvariantCulture);
         var altitude = 0.0;
+        var hasAltitude = false;
         var ele = point.Elements().FirstOrDefault(element => element.Name.LocalName == "ele");
         if (ele is not null && double.TryParse(ele.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var meters))
+        {
             altitude = meters;
-        return new RawPoint(latitude, longitude, altitude, PointText(point));
+            hasAltitude = true;
+        }
+        return new RawPoint(latitude, longitude, altitude, PointText(point), hasAltitude);
     }
 
     private static CourseIntervalDefinition ReadInterval(XElement item) => new()
@@ -635,9 +676,9 @@ public static class GpxCourse
 
     private static string? Attribute(XElement element, string name) => element.Attribute(name)?.Value;
 
-    private readonly record struct RawPoint(double Latitude, double Longitude, double AltitudeMeters, string? Text)
+    private readonly record struct RawPoint(double Latitude, double Longitude, double AltitudeMeters, string? Text, bool HasAltitude)
     {
-        public double AltitudeKm => AltitudeMeters / 1000.0;
+        public double AltitudeKm => HasAltitude ? AltitudeMeters / 1000.0 : Altitude.Unknown.Kilometers;
         public double ElapsedKm => 0;
         public double Heading => 0;
     }

@@ -239,7 +239,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Parallel_waypoint_saves_leave_one_complete_list()
     {
         var owner = await Rider("race");
@@ -267,7 +266,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_An_unpublished_course_is_not_readable_without_the_owner()
     {
         var owner = await Rider("priv");
@@ -295,7 +293,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Another_user_cannot_attach_a_private_course_to_their_account()
     {
         var owner = await Rider("src");
@@ -308,7 +305,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_A_changed_password_with_a_trailing_space_can_still_sign_in()
     {
         var owner = await Rider("trim");
@@ -326,7 +322,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_The_same_email_with_different_letter_case_is_rejected()
     {
         var owner = await Rider("mail");
@@ -340,7 +335,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Sea_level_elevation_is_stored_as_zero_meters()
     {
         var owner = await Rider("sea");
@@ -358,7 +352,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Duplicate_waypoint_timestamps_are_rejected_instead_of_crashing()
     {
         var owner = await Rider("tick");
@@ -382,7 +375,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_Account_status_is_not_public()
     {
         var owner = await Rider("stat");
@@ -394,7 +386,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_A_course_name_longer_than_128_characters_is_rejected()
     {
         var owner = await Rider("long");
@@ -408,7 +399,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_A_login_longer_than_32_characters_is_rejected()
     {
         using var client = _factory.CreateClient();
@@ -425,7 +415,6 @@ public class EdgeCaseApiTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public async Task KnownBug_A_missing_timestamp_does_not_collide_with_tick_one()
     {
         var owner = await Rider("tick0");

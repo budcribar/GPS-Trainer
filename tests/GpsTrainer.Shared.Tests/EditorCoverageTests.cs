@@ -209,7 +209,6 @@ public class EditorCoverageTests
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public void KnownBug_Gpx_export_keeps_timestamp_order_when_elapsed_distance_is_not_sorted()
     {
         var waypoints = new List<Waypoint>
@@ -226,7 +225,6 @@ public class EditorCoverageTests
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public void KnownBug_A_track_point_with_no_elevation_is_unknown_not_sea_level()
     {
         var xml = """
@@ -247,7 +245,6 @@ public class EditorCoverageTests
     }
 
     [Fact]
-    [Trait("Category", "KnownBug")]
     public void KnownBug_Duplicate_user_name_is_not_reported_as_a_duplicate_course()
     {
         var source = ReadRepoFile("src/GpsTrainer.App/Pages/Screens.cs");

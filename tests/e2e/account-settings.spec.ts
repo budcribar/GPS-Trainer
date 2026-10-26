@@ -50,7 +50,6 @@ test("password change rejects the wrong current password and the new one signs i
 });
 
 test("a map click saves the home location and the editor opens there after reload", async ({ page, request }) => {
-  test.fail(true, "Known bug: reloading Account leaves the map on Fort Collins instead of the saved home.");
   const account = await rider(request);
   await openSigned(page, "/account", account.session);
   await page.locator("#profile-map.leaflet-container").waitFor();

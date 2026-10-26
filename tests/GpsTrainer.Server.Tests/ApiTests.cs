@@ -83,8 +83,8 @@ public class ApiTests : IClassFixture<ApiFactory>
 
         var waypoints = new[]
         {
-            new Waypoint { Latitude = 40.01, Longitude = -105.27, WaypointType = WaypointType.Start, TimestampTicks = 10 },
-            new Waypoint { Latitude = 40.02, Longitude = -105.26, WaypointType = WaypointType.TurnLeft, TimestampTicks = 20, TextDescription = "onto Main" }
+            new Waypoint { Latitude = 40.01, Longitude = -105.27, WaypointType = WaypointType.Start, TimestampTicks = 10, AltitudeKm = Altitude.Unknown.Kilometers },
+            new Waypoint { Latitude = 40.02, Longitude = -105.26, WaypointType = WaypointType.TurnLeft, TimestampTicks = 20, TextDescription = "onto Main", AltitudeKm = Altitude.Unknown.Kilometers }
         };
         var put = await _client.PutAsJsonAsync($"/api/courses/{saved.CourseId}/waypoints", waypoints);
         Assert.Equal(HttpStatusCode.NoContent, put.StatusCode);
@@ -445,6 +445,9 @@ public class ApiTests : IClassFixture<ApiFactory>
         var own = await owner.GetFromJsonAsync<List<TrackPoint>>($"/api/races/{priv.RaceId}/positions");
         Assert.Single(own!);
 
+        course.Publish = true;
+        course.Approved = true;
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/courses/{course.CourseId}", course)).StatusCode);
         var rows = await anonymous.GetFromJsonAsync<List<IntervalResultDto>>($"/api/courses/{course.CourseId}/interval-results");
         Assert.NotNull(rows);
     }

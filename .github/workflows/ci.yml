@@ -50,19 +50,13 @@ jobs:
             **/*.csproj
             global.json
 
-      - name: Known product bugs (expected to fail until fixed)
-        continue-on-error: true
+      - name: Known-bug category is empty
         run: |
-          set +e
+          set -euo pipefail
           filter='Category=KnownBug'
           dotnet test tests/GpsTrainer.Shared.Tests/GpsTrainer.Shared.Tests.csproj --filter "$filter" --logger "trx;LogFileName=shared-known.trx" --results-directory TestResults/known
-          shared=$?
           dotnet test tests/GpsTrainer.Server.Tests/GpsTrainer.Server.Tests.csproj --filter "$filter" --logger "trx;LogFileName=server-known.trx" --results-directory TestResults/known
-          server=$?
           dotnet test tests/GpsTrainer.Web.Tests/GpsTrainer.Web.Tests.csproj --filter "$filter" --logger "trx;LogFileName=web-known.trx" --results-directory TestResults/known
-          web=$?
-          echo "known-bug exits shared=$shared server=$server web=$web"
-          exit $(( shared || server || web ))
 
       - name: Upload known-bug results
         if: always()
