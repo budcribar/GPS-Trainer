@@ -16,6 +16,12 @@ internal sealed class EditorApi : HttpMessageHandler
     /// <summary>Every directions call fails with the off-road snap error.</summary>
     public bool NeverRoutes { get; set; }
 
+    /// <summary>Course bodies the editor posted or put, in order.</summary>
+    public List<Course> SavedCourses { get; } = [];
+
+    /// <summary>Waypoint lists the editor stored, in order.</summary>
+    public List<List<Waypoint>> SavedWaypoints { get; } = [];
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var path = request.RequestUri?.AbsolutePath ?? "";
@@ -68,6 +74,22 @@ internal sealed class EditorApi : HttpMessageHandler
         }
         if (path.Contains("/users/", StringComparison.Ordinal))
             return Json(new UserProfileDto { Login = "bud" });
+        if (path.Contains("/api/courses", StringComparison.Ordinal) && path.Contains("/waypoints", StringComparison.Ordinal)
+            && request.Method == HttpMethod.Put)
+        {
+            var points = await request.Content!.ReadFromJsonAsync<List<Waypoint>>(cancellationToken) ?? [];
+            SavedWaypoints.Add(points);
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        }
+        if (path.Contains("/api/courses", StringComparison.Ordinal) && !path.Contains("/waypoints", StringComparison.Ordinal)
+            && (request.Method == HttpMethod.Post || request.Method == HttpMethod.Put))
+        {
+            var course = await request.Content!.ReadFromJsonAsync<Course>(cancellationToken) ?? new Course();
+            if (course.CourseId == Guid.Empty)
+                course.CourseId = Guid.NewGuid();
+            SavedCourses.Add(course);
+            return Json(course);
+        }
         return new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 
