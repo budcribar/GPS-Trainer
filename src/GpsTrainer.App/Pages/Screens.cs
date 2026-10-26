@@ -166,7 +166,7 @@ static class Ui
         page.HideSoftInputOnTapped = true;
     }
 
-    /// <summary>Fields scroll. Actions stay in the band above the keyboard.</summary>
+    /// <summary>Fields scroll. The save action stays in the band above the keyboard.</summary>
     public static Grid Form(ContentPage page, IReadOnlyList<View> fields, IReadOnlyList<View> actions)
     {
         KeepAboveKeyboard(page);
@@ -184,6 +184,49 @@ static class Ui
         grid.Add(new ScrollView { Content = Column(fields.ToArray()) }, 0, 0);
         grid.Add(bar, 0, 1);
         return grid;
+    }
+
+    /// <summary>
+    /// One scrolling column. Chrome (logo, heading) hides while an entry is focused so a
+    /// 320x640 screen can show the fields above the keyboard. When <paramref name="pinToTop"/>
+    /// is set, focusing a field scrolls back to the top so the fields stay together.
+    /// </summary>
+    public static ScrollView AuthForm(ContentPage page, IReadOnlyList<View> chrome, IReadOnlyList<View> body, IReadOnlyList<Entry> entries, bool pinToTop)
+    {
+        KeepAboveKeyboard(page);
+        var column = Column(chrome.Concat(body).ToArray());
+        column.Spacing = 6;
+        column.Padding = new Thickness(12, 8, 12, 8);
+        var scroll = new ScrollView { Content = column };
+        foreach (var entry in entries)
+        {
+            entry.Focused += async (_, _) =>
+            {
+                foreach (var view in chrome)
+                    view.IsVisible = false;
+                await Task.Delay(280);
+                try
+                {
+                    if (pinToTop)
+                        await scroll.ScrollToAsync(0, 0, false);
+                    else
+                        await scroll.ScrollToAsync(entry, ScrollToPosition.MakeVisible, false);
+                }
+                catch (Exception)
+                {
+                    // The page can close while the keyboard inset is still changing.
+                }
+            };
+            entry.Unfocused += async (_, _) =>
+            {
+                await Task.Delay(180);
+                if (entries.Any(item => item.IsFocused))
+                    return;
+                foreach (var view in chrome)
+                    view.IsVisible = true;
+            };
+        }
+        return scroll;
     }
 
     public static Task Push(Page page) =>
@@ -204,19 +247,28 @@ public class LoginPage : ContentPage
             _password.Text = Preferences.Get("Password", "");
         _password.ReturnType = ReturnType.Go;
         _password.Completed += async (_, _) => await SignIn();
-        Content = Ui.Form(
+        _message.IsVisible = false;
+        var logo = new Image
+        {
+            Source = "gpstrainer.png",
+            HeightRequest = 56,
+            WidthRequest = 56,
+            HorizontalOptions = LayoutOptions.Center
+        };
+        var heading = Ui.Heading(AppStrings.app_name);
+        heading.FontSize = 22;
+        Content = Ui.AuthForm(
             this,
+            [logo, heading],
             [
-                new Image { Source = "gpstrainer.png", HeightRequest = 72, WidthRequest = 72, HorizontalOptions = LayoutOptions.Center },
-                Ui.Heading(AppStrings.app_name),
                 Ui.Labeled(AppStrings.UserName, _login),
-                Ui.Labeled(AppStrings.Password, _password)
-            ],
-            [
+                Ui.Labeled(AppStrings.Password, _password),
                 _message,
                 Ui.Command(AppStrings.login_login_button, SignIn),
                 Ui.Command(AppStrings.signup_button, () => Ui.Push(new SignupPage()))
-            ]);
+            ],
+            [_login, _password],
+            pinToTop: true);
     }
 
     private async Task SignIn()
@@ -228,7 +280,7 @@ public class LoginPage : ContentPage
         var password = _password.Text ?? "";
         if (login.Length == 0)
         {
-            _message.Text = AppStrings.please_enter_your_login_name;
+            ShowMessage(AppStrings.please_enter_your_login_name);
             return;
         }
         try
@@ -250,7 +302,7 @@ public class LoginPage : ContentPage
         }
         catch (Exception ex)
         {
-            _message.Text = AppStrings.no_internet_connection + " " + ex.Message;
+            ShowMessage(AppStrings.no_internet_connection + " " + ex.Message);
         }
 
         if (session.User is null && store.OfflineSignIn(login, password))
@@ -258,7 +310,7 @@ public class LoginPage : ContentPage
 
         if (session.User is null)
         {
-            _message.Text = AppStrings.signin_failed;
+            ShowMessage(AppStrings.signin_failed);
             return;
         }
         if (Preferences.Get("SavePassword", true))
@@ -271,6 +323,12 @@ public class LoginPage : ContentPage
         if (!string.IsNullOrEmpty(token))
             await api.RegisterPushAsync(login, token);
         await Ui.Push(new CourseListPage());
+    }
+
+    private void ShowMessage(string text)
+    {
+        _message.Text = text;
+        _message.IsVisible = text.Length > 0;
     }
 }
 
@@ -287,21 +345,24 @@ public class SignupPage : ContentPage
     public SignupPage()
     {
         Title = AppStrings.signup_button;
-        Content = Ui.Form(
+        _message.IsVisible = false;
+        var heading = Ui.Heading(AppStrings.signup_button);
+        heading.FontSize = 22;
+        Content = Ui.AuthForm(
             this,
+            [heading],
             [
-                Ui.Heading(AppStrings.signup_button),
                 Ui.Labeled(AppStrings.UserName, _login),
                 Ui.Labeled(AppStrings.Password, _password),
                 Ui.Labeled(AppStrings.email, _email),
                 Ui.Labeled(AppStrings.firstName, _first),
                 Ui.Labeled(AppStrings.LastName, _last),
-                Ui.Labeled(AppStrings.phone, _phone)
-            ],
-            [
+                Ui.Labeled(AppStrings.phone, _phone),
                 _message,
                 Ui.Command(AppStrings.signup_continue_button, Submit)
-            ]);
+            ],
+            [_login, _password, _email, _first, _last, _phone],
+            pinToTop: false);
     }
 
     private async Task Submit()
@@ -309,6 +370,7 @@ public class SignupPage : ContentPage
         if (!EmailValidator.Validate(_email.Text))
         {
             _message.Text = AppStrings.email;
+            _message.IsVisible = true;
             return;
         }
         var dto = new UserWriteDto
@@ -331,6 +393,7 @@ public class SignupPage : ContentPage
             "DuplicateEmail" => result,
             _ => result
         };
+        _message.IsVisible = !string.IsNullOrEmpty(_message.Text);
         if (result == "ok")
         {
             var account = new UserAccount

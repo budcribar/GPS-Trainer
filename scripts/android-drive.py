@@ -89,8 +89,82 @@ def dismiss_permissions(root: ET.Element | None) -> bool:
     return False
 
 
+def box(node: ET.Element) -> tuple[int, int, int, int] | None:
+    bounds = node.attrib.get("bounds") or ""
+    match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def content_viewport(root: ET.Element | None) -> tuple[int, int, int, int]:
+    best: tuple[int, int, int, int] | None = None
+    for node in nodes(root):
+        if not node.attrib.get("class", "").endswith("ScrollView"):
+            continue
+        bounds = box(node)
+        if bounds is None or bounds[1] <= 0 or bounds[3] <= bounds[1]:
+            continue
+        if best is None or (bounds[3] - bounds[1]) < (best[3] - best[1]):
+            best = bounds
+    return best or (0, 80, 320, 640)
+
+
+def visible_in(node: ET.Element | None, viewport: tuple[int, int, int, int]) -> bool:
+    if node is None:
+        return False
+    bounds = box(node)
+    if bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+        return False
+    height = bounds[3] - bounds[1]
+    overlap = min(bounds[3], viewport[3]) - max(bounds[1], viewport[1])
+    return overlap >= height * 0.85
+
+
+def swipe_viewport(viewport: tuple[int, int, int, int], direction: int) -> None:
+    x = (viewport[0] + viewport[2]) // 2
+    top = min(viewport[1] + 24, viewport[3] - 30)
+    bottom = max(top + 36, viewport[3] - 16)
+    if direction < 0:
+        sh("adb", "shell", "input", "swipe", str(x), str(bottom), str(x), str(top), "250")
+    else:
+        sh("adb", "shell", "input", "swipe", str(x), str(top), str(x), str(bottom), "250")
+    time.sleep(0.45)
+
+
+def reveal(hint: str, also: str | None = None) -> ET.Element | None:
+    """Scroll until the named field is on screen. `also` must be on screen too."""
+    for _ in range(8):
+        root = dump("reveal.xml")
+        if root is None:
+            return None
+        viewport = content_viewport(root)
+        field = find_field(root, hint)
+        if field is None:
+            matches = [node for node in nodes(root) if label(node) == hint]
+            field = matches[0] if matches else None
+        also_node = None
+        if also:
+            for node in nodes(root):
+                if label(node) == also:
+                    also_node = node
+                    break
+        if visible_in(field, viewport) and (also is None or visible_in(also_node, viewport)):
+            return field
+        bounds = box(field) if field is not None else None
+        if bounds is None or bounds[3] <= bounds[1] or bounds[1] >= viewport[3] - 4:
+            swipe_viewport(viewport, -1)
+        elif bounds[3] <= viewport[1] + 4 or (also and not visible_in(also_node, viewport)):
+            swipe_viewport(viewport, 1)
+        else:
+            swipe_viewport(viewport, -1)
+    return None
+
+
 def type_into(root: ET.Element | None, hint: str, value: str) -> bool:
     field = find_field(root, hint)
+    if field is None or not visible_in(field, content_viewport(root)):
+        field = reveal(hint)
     if field is None:
         fields = [node for node in nodes(root) if node.attrib.get("class", "").endswith("EditText")]
         if hint.lower().startswith("password") and len(fields) >= 2:
@@ -173,15 +247,32 @@ def main() -> int:
     if not type_into(root, "User Name:", LOGIN):
         print("Could not find the user name field.")
         return 1
-    root = dump("password.xml")
-    if not type_into(root, "Password:", PASSWORD):
-        print("Could not find the password field.")
+    # The logo collapses once a field is focused. Wait, then scroll Password into view.
+    time.sleep(0.8)
+    password = reveal("Password:", also="User Name:")
+    if password is None:
+        print("Password was not on screen with the keyboard open.")
+        shot("sign-in-keyboard.png")
         return 1
-    # The keyboard inset is applied after the field is focused. Wait for that
-    # layout pass so the Login tap uses the position above the keyboard.
-    time.sleep(1.5)
-    root = dump("login.xml")
-    if not tap(find(root, "Login")):
+    if not tap(password):
+        print("Could not focus the password field.")
+        shot("sign-in-keyboard.png")
+        return 1
+    sh("adb", "shell", "input", "text", PASSWORD.replace(" ", "%s"))
+    time.sleep(0.6)
+    root = dump("sign-in-keyboard.xml")
+    shot("sign-in-keyboard.png")
+    viewport = content_viewport(root)
+    user_label = next((node for node in nodes(root) if label(node) == "User Name:"), None)
+    password_label = next((node for node in nodes(root) if label(node) == "Password:"), None)
+    if not visible_in(user_label, viewport) or not visible_in(password_label, viewport):
+        print("User Name and Password were not both visible with the keyboard open.")
+        print(f"  viewport={viewport}")
+        print(f"  user={user_label.attrib.get('bounds') if user_label is not None else 'missing'}")
+        print(f"  password={password_label.attrib.get('bounds') if password_label is not None else 'missing'}")
+        return 1
+    login = reveal("Login")
+    if not tap(login):
         print("Could not find the Login button.")
         return 1
     time.sleep(8)
