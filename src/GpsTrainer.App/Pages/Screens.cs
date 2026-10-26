@@ -183,7 +183,7 @@ public class SignupPage : ContentPage
         _message.Text = result switch
         {
             "ok" => "Account created.",
-            "DuplicateUserName" => AppStrings.duplicate_course_name,
+            "DuplicateUserName" => "That user name is already registered.",
             "DuplicateEmail" => result,
             _ => result
         };
@@ -1207,6 +1207,7 @@ public class InsertWaypointPage : ContentPage
             WaypointType = type,
             TextDescription = _description.Text,
             ElapsedDistanceKm = run.ElapsedKilometers,
+            AltitudeKm = Altitude.Unknown.Kilometers,
             TimestampTicks = SoapDateTime.ToUnixTicks(DateTime.UtcNow)
         });
         store.Database.RecordAction(ActionType.ModifyCourse, session.Course.CourseId);

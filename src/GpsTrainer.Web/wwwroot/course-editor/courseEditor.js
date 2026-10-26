@@ -632,12 +632,45 @@ window.gpsTrainerCourseEditor = (function () {
       var point = pointer(event);
       openMapMenu(point.x, point.y, event.latlng.lat, event.latlng.lng);
     });
-    popupHandler = function (event) {
-      var target = event.target;
-      if (!target || !target.id || target.id.indexOf("turn-save-") !== 0) {
+    // Leaflet stops clicks inside a popup before they bubble, so Save is bound on the button itself.
+    map.on("popupopen", function (event) {
+      var root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
+      if (!root) {
         return;
       }
-      var index = Number(target.id.slice("turn-save-".length));
+      var button = root.querySelector("button[id^='turn-save-']");
+      if (!button || button.getAttribute("data-bound") === "1") {
+        return;
+      }
+      button.setAttribute("data-bound", "1");
+      var saveTurn = function (domEvent) {
+        if (domEvent) {
+          domEvent.preventDefault();
+          domEvent.stopPropagation();
+        }
+        var index = Number(button.id.slice("turn-save-".length));
+        var box = root.querySelector("#turn-text-" + index);
+        if (!box || !isFinite(index)) {
+          return;
+        }
+        callHost("SetWaypointText", [index, box.value]);
+      };
+      button.addEventListener("pointerdown", saveTurn);
+      button.addEventListener("click", saveTurn);
+    });
+    var lastTurnSave = 0;
+    popupHandler = function (event) {
+      var target = event.target;
+      var button = target && target.closest ? target.closest("button[id^='turn-save-']") : null;
+      if (!button) {
+        return;
+      }
+      var now = Date.now();
+      if (now - lastTurnSave < 400) {
+        return;
+      }
+      lastTurnSave = now;
+      var index = Number(button.id.slice("turn-save-".length));
       var box = document.getElementById("turn-text-" + index);
       if (!box || !isFinite(index)) {
         return;
@@ -645,7 +678,9 @@ window.gpsTrainerCourseEditor = (function () {
       event.preventDefault();
       callHost("SetWaypointText", [index, box.value]);
     };
-    document.addEventListener("click", popupHandler);
+    // A real press never becomes a click: the map swallows it. pointerdown still fires.
+    document.addEventListener("pointerdown", popupHandler, true);
+    document.addEventListener("click", popupHandler, true);
     keyHandler = function (event) {
       var tag = event.target && event.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
@@ -715,7 +750,7 @@ window.gpsTrainerCourseEditor = (function () {
     if (!map || typeof L === "undefined") {
       return;
     }
-    map.setView([latitude, longitude], Math.max(map.getZoom(), 13));
+    map.setView([latitude, longitude], Math.max(map.getZoom(), 13), { animate: false });
     if (homeMarker) {
       homeMarker.setLatLng([latitude, longitude]);
     }
@@ -828,7 +863,8 @@ window.gpsTrainerCourseEditor = (function () {
       keyHandler = null;
     }
     if (popupHandler) {
-      document.removeEventListener("click", popupHandler);
+      document.removeEventListener("pointerdown", popupHandler, true);
+      document.removeEventListener("click", popupHandler, true);
       popupHandler = null;
     }
     pendingMoveIndex = null;

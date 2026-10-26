@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Shared, Server, and Web tests
+        run: |
+          set -euo pipefail
+          filter='Category!=KnownBug'
+          dotnet test tests/GpsTrainer.Shared.Tests/GpsTrainer.Shared.Tests.csproj --filter "$filter" --logger "trx;LogFileName=shared.trx" --results-directory TestResults
+          dotnet test tests/GpsTrainer.Server.Tests/GpsTrainer.Server.Tests.csproj --filter "$filter" --logger "trx;LogFileName=server.trx" --results-directory TestResults
+          dotnet test tests/GpsTrainer.Web.Tests/GpsTrainer.Web.Tests.csproj --filter "$filter" --logger "trx;LogFileName=web.trx" --results-directory TestResults
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: TestResults
+          if-no-files-found: warn
+
+  known-bugs:
+    name: known-bugs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Known-bug category is empty
+        run: |
+          set -euo pipefail
+          filter='Category=KnownBug'
+          dotnet test tests/GpsTrainer.Shared.Tests/GpsTrainer.Shared.Tests.csproj --filter "$filter" --logger "trx;LogFileName=shared-known.trx" --results-directory TestResults/known
+          dotnet test tests/GpsTrainer.Server.Tests/GpsTrainer.Server.Tests.csproj --filter "$filter" --logger "trx;LogFileName=server-known.trx" --results-directory TestResults/known
+          dotnet test tests/GpsTrainer.Web.Tests/GpsTrainer.Web.Tests.csproj --filter "$filter" --logger "trx;LogFileName=web-known.trx" --results-directory TestResults/known
+
+      - name: Upload known-bug results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: known-bug-results
+          path: TestResults/known
+          if-no-files-found: warn
+
+  playwright:
+    name: playwright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-1.56.1
+
+      - name: Restore and build the local server
+        run: dotnet build src/GpsTrainer.Server/GpsTrainer.Server.csproj
+
+      - name: Install Playwright
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Browser tests against the local server
+        working-directory: tests/e2e
+        env:
+          CI: "true"
+        run: npx playwright test --project=local
+
+      - name: Upload Playwright report, traces, screenshots, and videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            tests/e2e/playwright-report
+            tests/e2e/test-results
+          if-no-files-found: warn
+
+  android:
+    name: android-emulator
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install the MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Build a debug APK for the emulator
+        run: >
+          dotnet build src/GpsTrainer.App/GpsTrainer.App.csproj
+          -f net10.0-android
+          -c Debug
+          -p:AndroidPackageFormat=apk
+          -p:RuntimeIdentifier=android-x64
+          -p:EmbedAssembliesIntoApk=true
+          -p:DefaultApiBaseUrl=http://10.0.2.2:5097
+
+      - name: Start the local server
+        run: |
+          set -euo pipefail
+          dotnet build src/GpsTrainer.Server/GpsTrainer.Server.csproj
+          nohup dotnet run --project src/GpsTrainer.Server/GpsTrainer.Server.csproj --launch-profile http --no-build > /tmp/gpstrainer-server.log 2>&1 &
+          for _ in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:5097/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          cat /tmp/gpstrainer-server.log
+          exit 1
+
+      - name: Create the emulator account and a course
+        run: bash scripts/android-seed.sh
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot an emulator, install the APK, and screenshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash scripts/android-smoke.sh
+
+      - name: Upload Android screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screenshots
+          path: android-screenshots
+          if-no-files-found: warn

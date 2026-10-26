@@ -97,6 +97,8 @@ else
     private string deleteConfirmation = "";
     private double latitude = MapDefaults.FortCollinsLatitude;
     private double longitude = MapDefaults.FortCollinsLongitude;
+    private bool profileReady;
+    private bool mapMounted;
     private DotNetObjectReference<Account>? self;
 
     protected override async Task OnInitializedAsync()
@@ -104,19 +106,22 @@ else
         if (Session.Login is null)
             return;
         var profile = await Api.ProfileAsync();
-        if (profile is null)
-            return;
-        Session.UpdateUser(profile);
-        var opening = MapDefaults.OpeningCenter(profile.Latitude, profile.Longitude);
-        latitude = opening.Latitude;
-        longitude = opening.Longitude;
-        KeepPasswords();
+        if (profile is not null)
+        {
+            Session.UpdateUser(profile);
+            var opening = MapDefaults.OpeningCenter(profile.Latitude, profile.Longitude);
+            latitude = opening.Latitude;
+            longitude = opening.Longitude;
+            KeepPasswords();
+        }
+        profileReady = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || Session.Login is null)
+        if (Session.Login is null || mapMounted || !profileReady)
             return;
+        mapMounted = true;
         self = DotNetObjectReference.Create(this);
         try
         {

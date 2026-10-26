@@ -89,6 +89,7 @@ public sealed class TrainerApi
     public async Task<UserStatus?> StatusAsync(string login)
     {
         using var http = Client();
+        Authorize(http);
         var response = await http.GetAsync($"api/users/{Uri.EscapeDataString(login)}/status");
         if (!response.IsSuccessStatusCode)
             return null;

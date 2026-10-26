@@ -7,6 +7,10 @@ obj/
 *.db-wal
 src/GpsTrainer.Server/data/
 TestResults/
+node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+android-screenshots/
 .dotnet/
 artifacts/
 *.apk

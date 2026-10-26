@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using GpsTrainer.Server.Data;
@@ -41,9 +42,12 @@ public static partial class GpsEndpoints
             if (string.IsNullOrWhiteSpace(body.Login) || string.IsNullOrWhiteSpace(body.Password))
                 return Results.BadRequest(new InsertUserResponse { Result = "MissingLogin" });
             var login = body.Login.TrimEnd();
+            if (login.Length > 32)
+                return Results.BadRequest(new InsertUserResponse { Result = "MissingLogin" });
             if (await db.Users.AnyAsync(u => u.Login.ToLower() == login.ToLower()))
                 return Results.Ok(new InsertUserResponse { Result = SoapContract.DuplicateUserName });
-            if (!string.IsNullOrWhiteSpace(body.Email) && await db.Users.AnyAsync(u => u.Email == body.Email))
+            var email = body.Email?.Trim() ?? "";
+            if (email.Length > 0 && await db.Users.AnyAsync(u => u.Email != null && u.Email.ToLower() == email.ToLower()))
                 return Results.Ok(new InsertUserResponse { Result = SoapContract.DuplicateEmail });
 
             db.Users.Add(new UserRow
@@ -56,7 +60,7 @@ public static partial class GpsEndpoints
                 City = body.City,
                 State = body.State,
                 Country = string.IsNullOrWhiteSpace(body.Country) ? "US" : body.Country,
-                Email = body.Email,
+                Email = email,
                 PhoneNumber = body.PhoneNumber,
                 IsMale = body.IsMale,
                 BirthDate = body.BirthDate,
@@ -78,8 +82,12 @@ public static partial class GpsEndpoints
             return user is null ? Results.NotFound() : Results.Ok(ToProfile(user));
         });
 
-        api.MapGet("/users/{login}/status", async (string login, GpsTrainerDb db) =>
+        api.MapGet("/users/{login}/status", async (string login, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
+            // The same response for a missing account and for someone else's account,
+            // so this route cannot be used to discover which logins exist.
+            if (!CanReadUser(http, config, login))
+                return Results.Unauthorized();
             var user = await db.Users.FindAsync(login);
             if (user is null)
                 return Results.NotFound();
@@ -164,16 +172,22 @@ public static partial class GpsEndpoints
             return Results.Ok(courses);
         });
 
-        api.MapGet("/courses/{id:guid}", async (Guid id, GpsTrainerDb db) =>
+        api.MapGet("/courses/{id:guid}", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
             var course = await db.Courses.FindAsync(id);
-            return course is null ? Results.NotFound() : Results.Ok(course);
+            if (course is null)
+                return Results.NotFound();
+            if (!CanReadCourse(http, config, course))
+                return Results.NotFound();
+            return Results.Ok(course);
         });
 
         api.MapPost("/courses", async (Course body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
             if (!CanReadUser(http, config, body.Login))
                 return Results.Unauthorized();
+            if (body.Name is { Length: > 128 })
+                return Results.BadRequest();
             if (body.CourseId == Guid.Empty)
                 body.CourseId = Guid.NewGuid();
             body.Timestamp = DateTime.UtcNow;
@@ -191,6 +205,8 @@ public static partial class GpsEndpoints
                 return Results.NotFound();
             if (!CanReadUser(http, config, row.Login))
                 return Results.Unauthorized();
+            if (body.Name is { Length: > 128 })
+                return Results.BadRequest();
             row.Name = body.Name;
             row.Comments = body.Comments;
             row.ActivityCode = body.ActivityCode;
@@ -238,6 +254,13 @@ public static partial class GpsEndpoints
         {
             if (!CanReadUser(http, config, login))
                 return Results.Unauthorized();
+            var course = await db.Courses.FindAsync(id);
+            if (course is null)
+                return Results.NotFound();
+            if (!IsAdmin(http, config)
+                && !string.Equals(course.Login, login, StringComparison.Ordinal)
+                && !CourseIsPublic(course))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (!await db.CourseDownloads.AnyAsync(d => d.Login == login && d.CourseId == id))
                 db.CourseDownloads.Add(new CourseDownload { Login = login, CourseId = id });
             await db.SaveChangesAsync();
@@ -255,8 +278,11 @@ public static partial class GpsEndpoints
             return Results.NoContent();
         });
 
-        api.MapGet("/courses/{id:guid}/waypoints", async (Guid id, GpsTrainerDb db) =>
+        api.MapGet("/courses/{id:guid}/waypoints", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
+            var course = await db.Courses.FindAsync(id);
+            if (course is not null && !CanReadCourse(http, config, course))
+                return Results.NotFound();
             var rows = await db.Waypoints.Where(w => w.CourseId == id).OrderBy(w => w.TimestampTicks).ToListAsync();
             return Results.Ok(rows.Select(w => new Waypoint
             {
@@ -274,58 +300,55 @@ public static partial class GpsEndpoints
 
         api.MapPut("/courses/{id:guid}/waypoints", async (Guid id, List<Waypoint> body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            var existing = db.Waypoints.Where(w => w.CourseId == id);
-            db.Waypoints.RemoveRange(existing);
-            var stored = await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync();
-            var incomingMarkers = body.Any(w => w.WaypointType is WaypointType.StartInterval or WaypointType.FinishInterval);
-            IReadOnlyList<Waypoint> finalWaypoints = body;
-            IReadOnlyList<CourseIntervalDefinition> intervals;
-            if (incomingMarkers || stored.Count == 0)
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
+            try
             {
-                var derived = IntervalCourse.FromMarkers(id, body).ToList();
-                KeepIntervalIds(stored.Select(ToDefinition).ToList(), derived);
-                intervals = derived;
-            }
-            else
-            {
-                var defs = stored.Select(ToDefinition).ToList();
-                foreach (var def in defs)
-                    IntervalCourse.Reproject(body, def);
-                intervals = defs;
-                finalWaypoints = IntervalCourse.WithMarkers(body, defs);
-            }
-            var tick = 1L;
-            foreach (var wp in finalWaypoints)
-            {
-                db.Waypoints.Add(new WaypointRow
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var stored = await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync();
+                var incomingMarkers = body.Any(w => w.WaypointType is WaypointType.StartInterval or WaypointType.FinishInterval);
+                IReadOnlyList<Waypoint> finalWaypoints = body;
+                IReadOnlyList<CourseIntervalDefinition> intervals;
+                if (incomingMarkers || stored.Count == 0)
                 {
-                    CourseId = id,
-                    TimestampTicks = wp.TimestampTicks == 0 ? tick++ : wp.TimestampTicks,
-                    Latitude = wp.Latitude,
-                    Longitude = wp.Longitude,
-                    Heading = wp.HeadingDegrees,
-                    WaypointType = (int)wp.WaypointType,
-                    AltitudeKm = wp.AltitudeKm == 0 ? Altitude.Unknown.Kilometers : wp.AltitudeKm,
-                    ElapsedDistanceKm = wp.ElapsedDistanceKm,
-                    TextDescription = wp.TextDescription
-                });
+                    var derived = IntervalCourse.FromMarkers(id, body).ToList();
+                    KeepIntervalIds(stored.Select(ToDefinition).ToList(), derived);
+                    intervals = derived;
+                }
+                else
+                {
+                    var defs = stored.Select(ToDefinition).ToList();
+                    foreach (var def in defs)
+                        IntervalCourse.Reproject(body, def);
+                    intervals = defs;
+                    finalWaypoints = IntervalCourse.WithMarkers(body, defs);
+                }
+                if (!TryStampWaypointRows(id, finalWaypoints, out var rows))
+                    return Results.BadRequest();
+                await using var transaction = await db.Database.BeginTransactionAsync();
+                db.Waypoints.RemoveRange(db.Waypoints.Where(w => w.CourseId == id));
+                db.Waypoints.AddRange(rows);
+                ReplaceIntervalRows(db, id, intervals);
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+                return Results.NoContent();
             }
-            ReplaceIntervalRows(db, id, intervals);
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.NoContent();
+            finally
+            {
+                gate.Release();
+            }
         });
 
         api.MapGet("/courses/nearest", async (string login, double latitude, double longitude, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
             if (!CanReadUser(http, config, login))
                 return Results.Unauthorized();
-            var courses = await db.Courses.Where(c => c.Publish).ToListAsync();
+            var courses = await db.Courses.Where(c => c.Publish && c.Approved).ToListAsync();
             CourseRow? best = null;
             var bestMeters = double.MaxValue;
             foreach (var course in courses)
@@ -618,6 +641,8 @@ public static partial class GpsEndpoints
             user.UserTimestamp = DateTime.UtcNow;
     }
 
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> WaypointSaveLocks = new();
+
     private static readonly string EphemeralSigningKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private static string SigningKey(IConfiguration config)
@@ -633,6 +658,53 @@ public static partial class GpsEndpoints
         if (IsAdmin(http, config))
             return true;
         return TryLogin(http, config, out var tokenLogin) && tokenLogin == login;
+    }
+
+    // A course other people can open is one the owner published and an admin approved.
+    private static bool CourseIsPublic(CourseRow course) => course.Publish && course.Approved;
+
+    private static bool CanReadCourse(HttpContext http, IConfiguration config, CourseRow course) =>
+        CourseIsPublic(course) || CanReadUser(http, config, course.Login);
+
+    // A missing tick used to be filled from 1, which collided with an explicit tick of 1
+    // and threw on the primary key. Duplicate explicit ticks are rejected before any write.
+    // Sea level (0 km) is stored as 0. Unknown elevation is the sentinel the client sends.
+    private static bool TryStampWaypointRows(Guid courseId, IReadOnlyList<Waypoint> waypoints, out List<WaypointRow> rows)
+    {
+        rows = new List<WaypointRow>(waypoints.Count);
+        var used = new HashSet<long>();
+        foreach (var wp in waypoints)
+        {
+            if (wp.TimestampTicks != 0 && !used.Add(wp.TimestampTicks))
+                return false;
+        }
+        var next = 1L;
+        foreach (var wp in waypoints)
+        {
+            long tick;
+            if (wp.TimestampTicks == 0)
+            {
+                while (!used.Add(next))
+                    next++;
+                tick = next;
+                next++;
+            }
+            else
+                tick = wp.TimestampTicks;
+            rows.Add(new WaypointRow
+            {
+                CourseId = courseId,
+                TimestampTicks = tick,
+                Latitude = wp.Latitude,
+                Longitude = wp.Longitude,
+                Heading = wp.HeadingDegrees,
+                WaypointType = (int)wp.WaypointType,
+                AltitudeKm = wp.AltitudeKm,
+                ElapsedDistanceKm = wp.ElapsedDistanceKm,
+                TextDescription = wp.TextDescription
+            });
+        }
+        return true;
     }
 
     private static bool IsAdmin(HttpContext http, IConfiguration config)
