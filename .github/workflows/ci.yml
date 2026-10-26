@@ -146,6 +146,7 @@ jobs:
           -c Debug
           -p:AndroidPackageFormat=apk
           -p:RuntimeIdentifier=android-x64
+          -p:EmbedAssembliesIntoApk=true
           -p:DefaultApiBaseUrl=http://10.0.2.2:5097
 
       - name: Start the local server
