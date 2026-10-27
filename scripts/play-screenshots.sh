@@ -13,14 +13,11 @@ echo "Installing $apk"
 adb install -r "$apk"
 adb shell wm size
 adb shell wm density
-# The default AVD skin is 320x640. Prefer the hardware profile set before boot,
-# and override the display if that profile did not stick.
-if ! adb shell wm size | tr -d '\r' | grep -q '1080x1920'; then
-  echo "Applying a 1080x1920 display override."
-  adb shell wm size 1080x1920
-  adb shell wm density 480
-  sleep 2
+# A software override scales a 320x640 framebuffer and breaks tap coordinates.
+if ! adb shell wm size | tr -d '\r' | grep -q 'Physical size: 1080x1920'; then
+  echo "Emulator framebuffer is not 1080x1920."
   adb shell wm size
+  exit 1
 fi
 
 # A full battery and a fixed clock, so the status bar is not a CI timestamp.

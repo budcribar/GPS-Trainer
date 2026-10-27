@@ -155,15 +155,49 @@ def field(root: ET.Element | None, hint: str) -> ET.Element | None:
 
 
 def type_into(hint: str, value: str) -> bool:
-    root = wait_for(hint, 20)
-    target = field(root, hint) or find(root, hint)
-    if not tap(target):
-        print(f"Could not focus {hint!r}.")
-        return False
-    sh("adb", "shell", "input", "text", value.replace(" ", "%s"))
-    time.sleep(0.4)
-    hide_keyboard()
-    return True
+    """Type into one field and check it. The password text is never printed."""
+    secret = hint.lower().startswith("password")
+    for _ in range(2):
+        hide_keyboard()
+        root = wait_for(hint, 20)
+        target = field(root, hint)
+        if target is None:
+            target = find(root, hint)
+        if not tap(target):
+            print(f"Could not focus {hint!r}.")
+            return False
+        time.sleep(0.4)
+        sh("adb", "shell", "input", "keyevent", "123")
+        sh("adb", "shell", "input", "keyevent", *["67"] * 40)
+        for ch in value:
+            if ch == " ":
+                token = "%s"
+            elif ch == "-":
+                sh("adb", "shell", "input", "keyevent", "69")
+                time.sleep(0.05)
+                continue
+            else:
+                token = ch
+            sh("adb", "shell", "input", "text", token)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        root = dump()
+        if secret:
+            entered = next((node for node in nodes(root) if node.attrib.get("password") == "true"), None)
+            text = "" if entered is None else (entered.attrib.get("text") or "")
+            username_intact = any(label(node) == LOGIN for node in nodes(root))
+            filled = text not in ("", "Password:", "Password") and len(text) == len(value)
+            focused = entered is not None and entered.attrib.get("focused") == "true"
+            if entered is not None and username_intact and (filled or focused):
+                hide_keyboard()
+                return True
+            print("Password field was not filled. Retrying.")
+        else:
+            if any(label(node) == value for node in nodes(root)):
+                hide_keyboard()
+                return True
+            print(f"{hint!r} did not keep the typed value. Retrying.")
+    return False
 
 
 def png_size(path: Path) -> tuple[int, int, int]:
@@ -208,15 +242,12 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     size = sh("adb", "shell", "wm", "size")
     print(size.strip())
-    if f"{WIDTH}x{HEIGHT}" not in size.replace(" ", ""):
-        print(f"Display is not {WIDTH}x{HEIGHT}; requesting an override.")
-        sh("adb", "shell", "wm", "size", f"{WIDTH}x{HEIGHT}")
-        sh("adb", "shell", "wm", "density", "480")
-        time.sleep(2)
-        size = sh("adb", "shell", "wm", "size")
-        print(size.strip())
-    if f"{WIDTH}x{HEIGHT}" not in size.replace(" ", ""):
-        print(f"Display is not {WIDTH}x{HEIGHT}.")
+    physical = ""
+    for line in size.splitlines():
+        if "Physical size:" in line:
+            physical = line.split(":", 1)[1].strip()
+    if physical != f"{WIDTH}x{HEIGHT}":
+        print(f"Framebuffer is {physical or 'unknown'}, expected {WIDTH}x{HEIGHT}.")
         return 1
 
     if wait_for("Login", 70) is None:
