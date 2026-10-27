@@ -89,6 +89,34 @@ def dismiss_permissions(root: ET.Element | None) -> bool:
     return False
 
 
+def is_anr(root: ET.Element | None) -> bool:
+    if find(root, "isn't responding") is not None:
+        return True
+    return find(root, "Close app") is not None and find(root, "Wait") is not None
+
+
+def clear_blockers() -> ET.Element | None:
+    """Dismiss a system not-responding dialog, then return the current hierarchy.
+
+    A cold API 34 emulator can miss the 5 second input deadline while Google
+    services are still starting. The app recovers; the dialog is what blocks
+    the next tap.
+    """
+    root = None
+    for _ in range(4):
+        root = dump("blocker.xml")
+        if root is None:
+            time.sleep(1)
+            continue
+        if is_anr(root):
+            print("App was slow; dismissing the not-responding dialog.")
+            tap(find(root, "Wait"))
+            time.sleep(2)
+            continue
+        return root
+    return root
+
+
 def box(node: ET.Element) -> tuple[int, int, int, int] | None:
     bounds = node.attrib.get("bounds") or ""
     match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
@@ -188,7 +216,8 @@ def find_field(root: ET.Element | None, hint: str) -> ET.Element | None:
 
 def back() -> None:
     sh("adb", "shell", "input", "keyevent", "KEYCODE_BACK")
-    time.sleep(0.8)
+    time.sleep(1.2)
+    clear_blockers()
 
 
 def open_overflow(root: ET.Element | None) -> bool:
@@ -203,25 +232,32 @@ def open_overflow(root: ET.Element | None) -> bool:
 
 
 def open_toolbar(title: str) -> bool:
-    root = dump("toolbar.xml")
-    if find(root, title) is not None:
-        return tap(find(root, title))
-    if not open_overflow(root):
-        return False
-    time.sleep(0.6)
-    root = dump("toolbar-open.xml")
-    return tap(find(root, title))
+    for _ in range(3):
+        root = clear_blockers()
+        if find(root, title) is not None:
+            return tap(find(root, title))
+        if not open_overflow(root):
+            time.sleep(1)
+            continue
+        time.sleep(0.6)
+        root = clear_blockers()
+        if tap(find(root, title)):
+            return True
+        time.sleep(1)
+    return False
 
 
 def visit(title: str, image: str) -> bool:
-    if not open_toolbar(title):
+    for _ in range(2):
+        if open_toolbar(title):
+            time.sleep(1.2)
+            shot(image)
+            back()
+            return True
         print(f"Could not open {title}.")
         shot(image)
-        return False
-    time.sleep(1.2)
-    shot(image)
-    back()
-    return True
+        clear_blockers()
+    return False
 
 
 def main() -> int:
