@@ -22,8 +22,10 @@
 		<!-- Display name. A side-by-side test build overrides -p:ApplicationTitle. -->
 		<ApplicationTitle>gpsTrainer</ApplicationTitle>
 
-		<!-- Original package from the 1.44 app. Do not change it: Play treats a new id as a different app. A side-by-side test build overrides -p:ApplicationId. -->
-		<ApplicationId>com.peakSwc.gpsTrainer</ApplicationId>
+		<!-- Play listing for com.peakSwc.gpsTrainer was removed in 2018 and rejects new uploads.
+		     This id is a new app. iOS and Windows keep the previous id. A test build can still override -p:ApplicationId. -->
+		<ApplicationId Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">com.peakswc.gpstrainer.app</ApplicationId>
+		<ApplicationId Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'android'">com.peakSwc.gpsTrainer</ApplicationId>
 
 		<!-- Empty uses the platform default (the live server on Android). -p:DefaultApiBaseUrl=https://host replaces it for a test APK. -->
 		<DefaultApiBaseUrl Condition="'$(DefaultApiBaseUrl)' == ''"></DefaultApiBaseUrl>

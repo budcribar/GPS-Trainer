@@ -225,8 +225,8 @@ def visit(title: str, image: str) -> bool:
 
 
 def main() -> int:
-    sh("adb", "shell", "pm", "grant", "com.peakSwc.gpsTrainer", "android.permission.ACCESS_FINE_LOCATION")
-    sh("adb", "shell", "pm", "grant", "com.peakSwc.gpsTrainer", "android.permission.ACCESS_COARSE_LOCATION")
+    sh("adb", "shell", "pm", "grant", "com.peakswc.gpstrainer.app", "android.permission.ACCESS_FINE_LOCATION")
+    sh("adb", "shell", "pm", "grant", "com.peakswc.gpstrainer.app", "android.permission.ACCESS_COARSE_LOCATION")
     sh("adb", "emu", "geo", "fix", "-105.27", "40.015", "1650")
     root = dump("sign-in.xml")
     for _ in range(3):
