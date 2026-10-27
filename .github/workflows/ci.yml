@@ -175,6 +175,7 @@ jobs:
       - name: Boot an emulator, install the APK, and screenshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
+          # minSdk is 24 (Android 7.0). This image must stay at API 24 or newer.
           api-level: 34
           arch: x86_64
           target: google_apis

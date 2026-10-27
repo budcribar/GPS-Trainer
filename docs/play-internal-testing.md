@@ -1,6 +1,6 @@
 # Play Console: internal testing for gpsTrainer
 
-Do this in a desktop browser, signed in to the Google account that owns the Play developer account. Create a new app. The package name is `com.peakswc.gpstrainer.app`. Do not upload a bundle for `com.peakSwc.gpsTrainer`: Google removed that listing in 2018 and Play rejects new uploads for it. versionName is 1.46. versionCode is 146, which a new app accepts. The signed bundle is `gpstrainer-1.46-146.aab`. The app targets Android 16 (API 36).
+Do this in a desktop browser, signed in to the Google account that owns the Play developer account. Create a new app. The package name is `com.peakswc.gpstrainer.app`. Do not upload a bundle for `com.peakSwc.gpsTrainer`: Google removed that listing in 2018 and Play rejects new uploads for it. versionName is 1.46. versionCode is 146, which a new app accepts. The signed bundle is `gpstrainer-1.46-146.aab`. The minimum Android version is 7.0 (API 24). The app targets Android 16 (API 36).
 
 ## Before you start
 
