@@ -198,13 +198,23 @@ def require(name: str, text: str) -> None:
     if root is None:
         raise SystemExit(f"Did not reach {text!r} for {name}.")
     path = shot(name)
-    print(f"captured {path}")
+    width, height, _ = png_size(path)
+    print(f"captured {path} {width}x{height}")
+    if (width, height) != (WIDTH, HEIGHT):
+        raise SystemExit(f"{name} is {width}x{height}, expected {WIDTH}x{HEIGHT}.")
 
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     size = sh("adb", "shell", "wm", "size")
     print(size.strip())
+    if f"{WIDTH}x{HEIGHT}" not in size.replace(" ", ""):
+        print(f"Display is not {WIDTH}x{HEIGHT}; requesting an override.")
+        sh("adb", "shell", "wm", "size", f"{WIDTH}x{HEIGHT}")
+        sh("adb", "shell", "wm", "density", "480")
+        time.sleep(2)
+        size = sh("adb", "shell", "wm", "size")
+        print(size.strip())
     if f"{WIDTH}x{HEIGHT}" not in size.replace(" ", ""):
         print(f"Display is not {WIDTH}x{HEIGHT}.")
         return 1

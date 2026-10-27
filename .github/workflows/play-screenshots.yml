@@ -70,7 +70,6 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-metrics
           pre-emulator-launch-script: |
-            set -euo pipefail
             cfg="$HOME/.android/avd/playshots.avd/config.ini"
             test -f "$cfg"
             set_kv() {
@@ -85,9 +84,10 @@ jobs:
             set_kv hw.lcd.density 480
             set_kv hw.keyboard no
             set_kv showDeviceFrame no
-            set_kv skin.name 1080x1920
-            sed -i '/^skin.path=/d' "$cfg"
-            grep -E '^(hw.lcd.|skin.)' "$cfg"
+            set_kv skin.dynamic yes
+            sed -i '/^skin.name=/d; /^skin.path=/d' "$cfg"
+            echo "--- avd display ---"
+            grep -E '^(hw.lcd.|skin.|showDeviceFrame)' "$cfg" || true
           script: bash scripts/play-screenshots.sh
 
       - name: Upload the Play screenshots

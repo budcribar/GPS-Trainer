@@ -13,6 +13,15 @@ echo "Installing $apk"
 adb install -r "$apk"
 adb shell wm size
 adb shell wm density
+# The default AVD skin is 320x640. Prefer the hardware profile set before boot,
+# and override the display if that profile did not stick.
+if ! adb shell wm size | tr -d '\r' | grep -q '1080x1920'; then
+  echo "Applying a 1080x1920 display override."
+  adb shell wm size 1080x1920
+  adb shell wm density 480
+  sleep 2
+  adb shell wm size
+fi
 
 # A full battery and a fixed clock, so the status bar is not a CI timestamp.
 adb shell settings put global sysui_demo_allowed 1 || true
