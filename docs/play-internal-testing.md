@@ -1,6 +1,6 @@
 # Play Console: internal testing for gpsTrainer
 
-Do this in a desktop browser, signed in to the Google account that owns the Play developer account. The package name is `com.peakSwc.gpsTrainer`. versionName is 1.46. versionCode is 146. The signed bundle is `gpstrainer-1.46-146.aab`.
+Do this in a desktop browser, signed in to the Google account that owns the Play developer account. Create a new app. The package name is `com.peakswc.gpstrainer.app`. Do not upload a bundle for `com.peakSwc.gpsTrainer`: Google removed that listing in 2018 and Play rejects new uploads for it. versionName is 1.46. versionCode is 146, which a new app accepts. The signed bundle is `gpstrainer-1.46-146.aab`. The app targets Android 16 (API 36).
 
 ## Before you start
 
@@ -16,14 +16,13 @@ Do this in a desktop browser, signed in to the Google account that owns the Play
 ## 1. Create the app
 
 1. Open [Google Play Console](https://play.google.com/console).
-2. If an app with package name `com.peakSwc.gpsTrainer` is already listed, open it and skip to section 3. Creating another app with this package name is not possible.
-3. Click **Create app**.
-4. App name: `gpsTrainer`.
-5. Default language: **English (United States)**.
-6. App or game: **App**.
-7. Free or paid: **Free**, unless you intend to charge. This project has no billing code.
-8. Check the declarations for the Developer Program Policies and for US export laws.
-9. Click **Create app**.
+2. Click **Create app**. Do not open the removed `com.peakSwc.gpsTrainer` listing. The package name is not typed on this form. The first bundle you upload sets it to `com.peakswc.gpstrainer.app`.
+3. App name: `gpsTrainer`.
+4. Default language: **English (United States)**.
+5. App or game: **App**.
+6. Free or paid: **Free**, unless you intend to charge. This project has no billing code.
+7. Check the declarations for the Developer Program Policies and for US export laws.
+8. Click **Create app**.
 
 ## 2. Complete App content
 

@@ -41,7 +41,7 @@ jobs:
           -p:RuntimeIdentifier=android-arm64
           -p:EmbedAssembliesIntoApk=true
           -p:AndroidKeyStore=false
-          -p:ApplicationId=com.peakSwc.gpsTrainer
+          -p:ApplicationId=com.peakswc.gpstrainer.app
 
       - name: Collect the signed APK
         run: |

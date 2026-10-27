@@ -14,7 +14,7 @@ if [[ -z "${apk}" ]]; then
 fi
 echo "Installing $apk"
 adb install -r "$apk"
-adb shell monkey -p com.peakSwc.gpsTrainer -c android.intent.category.LAUNCHER 1
+adb shell monkey -p com.peakswc.gpstrainer.app -c android.intent.category.LAUNCHER 1
 sleep 12
 adb exec-out screencap -p > "$out/sign-in.png"
 adb shell uiautomator dump /sdcard/uidump.xml || true
