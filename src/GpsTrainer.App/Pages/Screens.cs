@@ -250,7 +250,7 @@ public class LoginPage : ContentPage
         _message.IsVisible = false;
         var logo = new Image
         {
-            Source = "gpstrainer.png",
+            Source = "runner.png",
             HeightRequest = 56,
             WidthRequest = 56,
             HorizontalOptions = LayoutOptions.Center
@@ -420,7 +420,6 @@ public class CourseListPage : ContentPage
     {
         Title = AppStrings.app_name;
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_options, null, () => Ui.Push(new PreferencesPage())));
-        ToolbarItems.Add(new ToolbarItem(AppStrings.menu_data, null, () => Ui.Push(new DataPage())));
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_gps_info, null, () => Ui.Push(new GpsInfoPage())));
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_about, null, () => Ui.Push(new AboutPage())));
         Content = new ScrollView
@@ -428,7 +427,15 @@ public class CourseListPage : ContentPage
             Content = Ui.Column(
                 Ui.Heading("Courses"),
                 _list,
-                Ui.Command(AppStrings.menu_insert_course, () => Ui.Push(new CourseEditPage(null))),
+                Ui.Command(AppStrings.menu_insert_course, async () =>
+                {
+                    if (DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+                    {
+                        await DisplayAlertAsync(AppStrings.warning_title, DatabaseCompact.PleaseWait, AppStrings.confirm);
+                        return;
+                    }
+                    await Ui.Push(new CourseEditPage(null));
+                }),
                 Ui.Command("Import GPX", ImportGpx))
         };
     }
@@ -462,6 +469,8 @@ public class CourseListPage : ContentPage
 
     private static async Task ImportGpx()
     {
+        if (DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+            throw new InvalidOperationException(DatabaseCompact.PleaseWait);
         var session = Services.Current.GetRequiredService<AppSession>();
         if (string.IsNullOrEmpty(session.Token))
             throw new InvalidOperationException("Sign in before importing a GPX file.");
@@ -555,6 +564,11 @@ public class CourseEditPage : ContentPage
                 _course.ElapsedDistanceKm = _imported.Max(point => point.ElapsedDistanceKm);
         }
         var isNew = store.Database.ListCourses().All(c => c.CourseId != _course.CourseId);
+        if (isNew && DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+        {
+            await DisplayAlertAsync(AppStrings.warning_title, DatabaseCompact.PleaseWait, AppStrings.confirm);
+            return;
+        }
         store.Database.UpsertCourse(_course);
         if (_imported is not null)
             store.Database.ReplaceWaypoints(_course.CourseId, _imported);
@@ -567,26 +581,23 @@ public class CourseEditPage : ContentPage
 public class CourseDetailsPage : ContentPage
 {
     private readonly Course _course;
+    private readonly LeafletMap _map = new();
+    private readonly Label _distance = new();
 
     public CourseDetailsPage(Course course)
     {
         _course = course;
         Title = course.Name;
-        var map = new LeafletMap();
         var points = Services.Current.GetRequiredService<TrainerRepository>().Database.ListWaypoints(course.CourseId);
-        var home = Services.Current.GetRequiredService<AppSession>().User;
-        map.Show(
-            points.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())),
-            centerLatitude: home?.Latitude,
-            centerLongitude: home?.Longitude);
+        _distance.Text = Distance.FromKilometers(course.ElapsedDistanceKm).Format(null);
         Content = new ScrollView
         {
             Content = Ui.Column(
                 Ui.Heading(course.Name),
                 new Label { Text = course.Comments },
-                new Label { Text = Distance.FromKilometers(course.ElapsedDistanceKm).Format(null) },
+                _distance,
                 Ui.IntervalList(points),
-                map,
+                _map,
                 new Label { Text = "Learning mode records the ride and adds turn waypoints. Map mode adds a waypoint where you tap." },
                 Ui.Command("Learning mode", () => Start(learning: true)),
                 Ui.Command("Map mode", () => Ui.Push(new MapCoursePage(course))),
@@ -595,6 +606,19 @@ public class CourseDetailsPage : ContentPage
                 Ui.Command("Races", () => Ui.Push(new RaceListPage(course))),
                 Ui.Command(AppStrings.menu_delete_course, Delete))
         };
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        var points = Services.Current.GetRequiredService<TrainerRepository>().Database.ListWaypoints(_course.CourseId);
+        var home = Services.Current.GetRequiredService<AppSession>().User;
+        _distance.Text = Distance.FromKilometers(_course.ElapsedDistanceKm).Format(null);
+        _map.Show(
+            points.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())),
+            fit: points.Count > 1,
+            centerLatitude: home?.Latitude,
+            centerLongitude: home?.Longitude);
     }
 
     private async Task DownloadGpx()
@@ -881,6 +905,8 @@ public class RunningPage : ContentPage
     private readonly Grid _checkpointRow;
     private readonly Button _addWaypoint = new() { Text = "Add Waypoint", IsVisible = false };
     private readonly Button _useLocation = new() { Text = "Use location", IsVisible = false };
+    private readonly Button _start;
+    private readonly Button _finish;
     private View? _ride;
     private IDispatcherTimer? _timer;
     private bool _listening;
@@ -912,22 +938,26 @@ public class RunningPage : ContentPage
                 _addWaypoint
             }
         };
+        var run = Services.Current.GetRequiredService<RunSession>();
+        _start = Ui.Command(AppStrings.start, async () =>
+        {
+            Services.Current.GetRequiredService<RunSession>().Go();
+            await Refresh();
+        });
+        _finish = Ui.Command("Finish", async () =>
+        {
+            var run = Services.Current.GetRequiredService<RunSession>();
+            run.Finish();
+            await SaveTrace(run);
+            QueueSynchronize();
+            await Navigation.PopAsync();
+        });
+        ShowRideButtons(run.State);
         _ride = new ScrollView
         {
             Content = Ui.Column(readouts,
-                Ui.Command(AppStrings.start, async () =>
-                {
-                    Services.Current.GetRequiredService<RunSession>().Go();
-                    await Refresh();
-                }),
-                Ui.Command("Finish", async () =>
-                {
-                    var run = Services.Current.GetRequiredService<RunSession>();
-                    run.Finish();
-                    await SaveTrace(run);
-                    QueueSynchronize();
-                    await Navigation.PopAsync();
-                }),
+                _start,
+                _finish,
                 Ui.Command(AppStrings.cancel, async () =>
                 {
                     Services.Current.GetRequiredService<RunSession>().Abort();
@@ -962,6 +992,12 @@ public class RunningPage : ContentPage
         {
             return true;
         }
+    }
+
+    private void ShowRideButtons(RunStateKind state)
+    {
+        _start.IsVisible = RideControls.ShowStart(state);
+        _finish.IsVisible = RideControls.ShowFinish(state);
     }
 
     private static Label ReadoutValue(string text) => new()
@@ -1154,6 +1190,7 @@ public class RunningPage : ContentPage
         _checkpointUnit.Text = run.CheckpointUnit;
         _checkpointRow.IsVisible = !run.Learning;
         _addWaypoint.IsVisible = run.Learning;
+        ShowRideButtons(run.State);
         var speech = run.TakeSpeech();
         if (speech.Count > 0)
             await Services.Current.GetRequiredService<SpeechFeedback>().SpeakAsync(speech);
@@ -1216,6 +1253,8 @@ public class RunningPage : ContentPage
     {
         var session = Services.Current.GetRequiredService<AppSession>();
         var store = Services.Current.GetRequiredService<TrainerRepository>();
+        if (run.Learning && session.Course is not null)
+            LearnedCourse.Commit(store.Database, session.Course, run.RecordedTrack, run.Latitude, run.Longitude);
         if (session.Race is null)
             return;
         var points = run.RecordedTrack.ToList();
@@ -1669,10 +1708,31 @@ public class DataPage : ContentPage
         _status.Text = await Services.Current.GetRequiredService<SyncService>().SynchronizeAsync();
     }
 
-    private Task Compact()
+    private async Task Compact()
     {
-        _status.Text = "SQLite vacuum is available from the database file on device. The old CompactDatabaseService is not reimplemented as a separate Android service.";
-        return Task.CompletedTask;
+        var recording = Services.Current.GetRequiredService<RunSession>().State is RunStateKind.Learning or RunStateKind.Racing;
+        var maintenance = Services.Current.GetRequiredService<DatabaseMaintenance>();
+        if (!DatabaseCompact.ShouldStart(recording, maintenance.IsCompacting) || !maintenance.TryBegin())
+            return;
+        _status.Text = DatabaseCompact.PleaseWait;
+        try
+        {
+            var path = Services.Current.GetRequiredService<TrainerRepository>().Database.FilePath;
+            await Task.Run(() => LocalDatabase.Vacuum(path, TimeSpan.FromSeconds(30)));
+            await MainThread.InvokeOnMainThreadAsync(() =>
+            {
+                if (_status.Text == DatabaseCompact.PleaseWait)
+                    _status.Text = "";
+            });
+        }
+        catch (Exception)
+        {
+            await MainThread.InvokeOnMainThreadAsync(() => _status.Text = "The database was not compacted.");
+        }
+        finally
+        {
+            maintenance.End();
+        }
     }
 }
 
@@ -1683,7 +1743,7 @@ public class AboutPage : ContentPage
     public AboutPage()
     {
         Title = AppStrings.menu_about;
-        var icon = new Image { Source = "gpstrainer.png", HeightRequest = 96, WidthRequest = 96 };
+        var icon = new Image { Source = "runner.png", HeightRequest = 96, WidthRequest = 96 };
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, _) =>
         {

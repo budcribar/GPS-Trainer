@@ -101,16 +101,26 @@ test.describe("course lifecycle", () => {
     await expect(page.locator(".notice")).toContainText("Saved.");
 
     await page.goto("/courses");
-    await expect(page.locator("tr", { hasText: "North loop renamed" })).toBeVisible();
+    const renamed = page.locator("tr", { hasText: "North loop renamed" });
+    await expect(renamed).toBeVisible();
     await expect(page.locator("tr", { hasText: "North loop" }).filter({ hasNotText: "renamed" })).toHaveCount(0);
 
-    const session = JSON.parse(await page.evaluate(() => localStorage.getItem("gpstrainer.session") || "{}")) as { token?: string; login?: string };
-    const removed = await page.request.delete(`/api/courses/${courseId}?login=${session.login}`, {
+    await renamed.getByRole("button", { name: "Delete" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Delete course North loop renamed? This can't be undone");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(renamed).toBeVisible();
+
+    await renamed.getByRole("button", { name: "Delete" }).click();
+    await dialog.getByRole("button", { name: "Delete" }).click();
+    await expect(page.locator("tr", { hasText: "North loop renamed" })).toHaveCount(0);
+
+    const session = JSON.parse(await page.evaluate(() => localStorage.getItem("gpstrainer.session") || "{}")) as { token?: string };
+    const gone = await page.request.get(`/api/courses/${courseId}`, {
       headers: { authorization: `Bearer ${session.token}` }
     });
-    expect(removed.status()).toBe(204);
-    await page.reload();
-    await expect(page.locator("tr", { hasText: "North loop renamed" })).toHaveCount(0);
+    expect(gone.status()).toBe(404);
   });
 
   test("deleting the start promotes the next pin and the map menu can still move a point", async ({ page }) => {

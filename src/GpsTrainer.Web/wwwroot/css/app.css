@@ -383,6 +383,51 @@ code {
     cursor: pointer;
 }
 .courses-gpx:hover, .courses-gpx:focus-visible { background: #f3f8fb; }
+.courses-delete {
+    margin: 0;
+    padding: 0.28rem 0.65rem;
+    border: 1px solid #e7c4cb;
+    border-radius: 8px;
+    background: #fff;
+    color: #9b1c31;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.courses-delete:hover, .courses-delete:focus-visible { background: #fdf6f7; }
+.courses-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(22, 58, 38, 0.45);
+}
+.courses-confirm {
+    width: min(24rem, 100%);
+    padding: 1.25rem 1.2rem 1.1rem;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(31, 77, 50, 0.18);
+}
+.courses-confirm p { margin: 0; color: #163a26; font-size: 1.05rem; line-height: 1.45; }
+.courses-confirm-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+.courses-confirm-cancel, .courses-confirm-delete {
+    flex: 1;
+    margin: 0;
+    padding: 0.72rem 1rem;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+.courses-confirm-cancel { border: 1px solid #d5dee4; background: #fff; color: #163a26; }
+.courses-confirm-cancel:hover, .courses-confirm-cancel:focus-visible { background: #f4f8fb; }
+.courses-confirm-delete { border: 0; background: #9b1c31; color: #fff; }
+.courses-confirm-delete:hover, .courses-confirm-delete:focus-visible { background: #7d1628; }
+.courses-confirm-cancel:disabled, .courses-confirm-delete:disabled { cursor: default; opacity: 0.7; }
 .courses-links { margin: 1rem 0 0; text-align: center; }
 .courses-links a { color: #0076BD; font-weight: 700; text-decoration: none; }
 .courses-links a:hover, .courses-links a:focus-visible { text-decoration: underline; }

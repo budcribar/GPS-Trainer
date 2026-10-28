@@ -35,6 +35,10 @@
                             <a href="@($"intervals/{course.CourseId}")">Intervals</a>
                         }
                         <button type="button" class="courses-gpx" @onclick="() => DownloadGpx(course)">Download GPX</button>
+                        @if (Owns(course))
+                        {
+                            <button type="button" class="courses-delete" @onclick="() => AskDelete(course)">Delete</button>
+                        }
                     </td>
                 </tr>
             }
@@ -46,6 +50,18 @@
     {
         <p id="courses-note" class="notice">@message</p>
     }
+    @if (pendingDelete is not null)
+    {
+        <div class="courses-confirm-backdrop">
+            <div class="courses-confirm" role="dialog" aria-modal="true" aria-labelledby="courses-confirm-title">
+                <p id="courses-confirm-title">@DeleteQuestion(pendingDelete)</p>
+                <div class="courses-confirm-actions">
+                    <button type="button" class="courses-confirm-cancel" @onclick="CancelDelete" disabled="@deleting">Cancel</button>
+                    <button type="button" class="courses-confirm-delete" @onclick="ConfirmDelete" disabled="@deleting">Delete</button>
+                </div>
+            </div>
+        </div>
+    }
 </section>
 
 @code {
@@ -53,6 +69,8 @@
     private IReadOnlyList<ActivityCode> activities = [];
     private readonly HashSet<Guid> withIntervals = [];
     private string? message;
+    private Course? pendingDelete;
+    private bool deleting;
 
     protected override async Task OnInitializedAsync()
     {
@@ -78,6 +96,45 @@
     {
         var name = activities.FirstOrDefault(activity => activity.ActKey == course.ActivityCode)?.ActValue;
         return string.IsNullOrWhiteSpace(name) ? "Unknown activity" : name;
+    }
+
+    private bool Owns(Course course) =>
+        !string.IsNullOrEmpty(Session.Login)
+        && string.Equals(course.Login, Session.Login, StringComparison.Ordinal);
+
+    private static string DeleteQuestion(Course course)
+    {
+        var name = string.IsNullOrWhiteSpace(course.Name) ? "this course" : course.Name.Trim();
+        return $"Delete course {name}? This can't be undone";
+    }
+
+    private void AskDelete(Course course) => pendingDelete = course;
+
+    private void CancelDelete()
+    {
+        if (!deleting)
+            pendingDelete = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (pendingDelete is null || deleting)
+            return;
+        deleting = true;
+        var course = pendingDelete;
+        var removed = await Api.DeleteCourseAsync(course.CourseId);
+        if (!removed)
+        {
+            message = "That course was not deleted.";
+            deleting = false;
+            pendingDelete = null;
+            return;
+        }
+        courses = await Api.CoursesAsync();
+        withIntervals.Remove(course.CourseId);
+        message = null;
+        deleting = false;
+        pendingDelete = null;
     }
 
     private async Task DownloadGpx(Course course)
