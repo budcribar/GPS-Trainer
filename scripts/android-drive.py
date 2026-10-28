@@ -330,7 +330,6 @@ def main() -> int:
     menu_ok = True
     for title, image in (
         ("Settings", "settings.png"),
-        ("Data", "data.png"),
         ("GPS Info", "gps-info.png"),
         ("About", "about.png"),
     ):
@@ -415,7 +414,7 @@ def main() -> int:
                                         back()
                                     back()
                 back()
-    print("Captured sign-in, signup, courses, settings, data, GPS info, about, and new course.")
+    print("Captured sign-in, signup, courses, settings, GPS info, about, and new course.")
     return 0
 
 

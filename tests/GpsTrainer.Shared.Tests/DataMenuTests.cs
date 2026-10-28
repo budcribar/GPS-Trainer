@@ -6,9 +6,11 @@ public class DataMenuTests
     public void The_course_list_does_not_open_data_and_the_page_remains()
     {
         var screens = File.ReadAllText(RepoFile("src/GpsTrainer.App/Pages/Screens.cs"));
+        var drive = File.ReadAllText(RepoFile("scripts/android-drive.py"));
         Assert.Contains("public class DataPage", screens, StringComparison.Ordinal);
         Assert.DoesNotContain("new DataPage()", screens, StringComparison.Ordinal);
         Assert.DoesNotContain("menu_data, null", screens, StringComparison.Ordinal);
+        Assert.DoesNotContain("(\"Data\", \"data.png\")", drive, StringComparison.Ordinal);
     }
 
     private static string RepoFile(string relative)
