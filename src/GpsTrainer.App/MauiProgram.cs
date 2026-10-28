@@ -19,6 +19,7 @@ public static class MauiProgram
 		builder.Services.AddSingleton<TrainerRepository>();
 		builder.Services.AddSingleton<TrainerApi>();
 		builder.Services.AddSingleton<SyncService>();
+		builder.Services.AddSingleton<DatabaseMaintenance>();
 		builder.Services.AddSingleton<RunSession>();
 		builder.Services.AddSingleton<IAudioCuePlayer, PackageAudioPlayer>();
 		builder.Services.AddSingleton<SpeechFeedback>();
