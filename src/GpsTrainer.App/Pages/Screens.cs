@@ -567,26 +567,23 @@ public class CourseEditPage : ContentPage
 public class CourseDetailsPage : ContentPage
 {
     private readonly Course _course;
+    private readonly LeafletMap _map = new();
+    private readonly Label _distance = new();
 
     public CourseDetailsPage(Course course)
     {
         _course = course;
         Title = course.Name;
-        var map = new LeafletMap();
         var points = Services.Current.GetRequiredService<TrainerRepository>().Database.ListWaypoints(course.CourseId);
-        var home = Services.Current.GetRequiredService<AppSession>().User;
-        map.Show(
-            points.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())),
-            centerLatitude: home?.Latitude,
-            centerLongitude: home?.Longitude);
+        _distance.Text = Distance.FromKilometers(course.ElapsedDistanceKm).Format(null);
         Content = new ScrollView
         {
             Content = Ui.Column(
                 Ui.Heading(course.Name),
                 new Label { Text = course.Comments },
-                new Label { Text = Distance.FromKilometers(course.ElapsedDistanceKm).Format(null) },
+                _distance,
                 Ui.IntervalList(points),
-                map,
+                _map,
                 new Label { Text = "Learning mode records the ride and adds turn waypoints. Map mode adds a waypoint where you tap." },
                 Ui.Command("Learning mode", () => Start(learning: true)),
                 Ui.Command("Map mode", () => Ui.Push(new MapCoursePage(course))),
@@ -595,6 +592,19 @@ public class CourseDetailsPage : ContentPage
                 Ui.Command("Races", () => Ui.Push(new RaceListPage(course))),
                 Ui.Command(AppStrings.menu_delete_course, Delete))
         };
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        var points = Services.Current.GetRequiredService<TrainerRepository>().Database.ListWaypoints(_course.CourseId);
+        var home = Services.Current.GetRequiredService<AppSession>().User;
+        _distance.Text = Distance.FromKilometers(_course.ElapsedDistanceKm).Format(null);
+        _map.Show(
+            points.Select(p => (p.Latitude, p.Longitude, p.WaypointType.ToString())),
+            fit: points.Count > 1,
+            centerLatitude: home?.Latitude,
+            centerLongitude: home?.Longitude);
     }
 
     private async Task DownloadGpx()
@@ -1187,6 +1197,8 @@ public class RunningPage : ContentPage
     {
         var session = Services.Current.GetRequiredService<AppSession>();
         var store = Services.Current.GetRequiredService<TrainerRepository>();
+        if (run.Learning && session.Course is not null)
+            LearnedCourse.Commit(store.Database, session.Course, run.RecordedTrack, run.Latitude, run.Longitude);
         if (session.Race is null)
             return;
         var points = run.RecordedTrack.ToList();
