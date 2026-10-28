@@ -28,9 +28,9 @@ public sealed class CoursesTests : TestContext
             new ActivityCode { ActKey = 5, ActValue = "XCountry Skate" },
             new ActivityCode { ActKey = 8, ActValue = "XCountry Classic" }
         ]);
-        _api.Courses.Add(new Course { CourseId = _loop, Name = "Poudre loop", ActivityCode = 3, ElapsedDistanceKm = 18.4 });
-        _api.Courses.Add(new Course { CourseId = _run, Name = "Spring creek", ActivityCode = 1, ElapsedDistanceKm = 8.2 });
-        _api.Courses.Add(new Course { CourseId = _mystery, Name = "Mystery outing", ActivityCode = 42, ElapsedDistanceKm = 3.5 });
+        _api.Courses.Add(new Course { CourseId = _loop, Name = "Poudre loop", Login = "bud", ActivityCode = 3, ElapsedDistanceKm = 18.4 });
+        _api.Courses.Add(new Course { CourseId = _run, Name = "Spring creek", Login = "bud", ActivityCode = 1, ElapsedDistanceKm = 8.2 });
+        _api.Courses.Add(new Course { CourseId = _mystery, Name = "Mystery outing", Login = "someone", ActivityCode = 42, ElapsedDistanceKm = 3.5 });
         _api.WithIntervals.Add(_loop);
     }
 
@@ -83,6 +83,64 @@ public sealed class CoursesTests : TestContext
     }
 
     [Fact]
+    public void Delete_is_offered_only_for_the_signed_in_owners_courses()
+    {
+        SignIn();
+        var cut = RenderComponent<Courses>();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal("Delete", rows[0].QuerySelector(".courses-delete")!.TextContent);
+        Assert.Equal("Delete", rows[1].QuerySelector(".courses-delete")!.TextContent);
+        Assert.Empty(rows[2].QuerySelectorAll(".courses-delete"));
+    }
+
+    [Fact]
+    public void Cancel_leaves_the_course_and_confirm_removes_only_that_course()
+    {
+        SignIn();
+        var cut = RenderComponent<Courses>();
+
+        cut.Find("tbody tr .courses-delete").Click();
+        var dialog = cut.Find("[role='dialog']");
+        Assert.Equal("Delete course Poudre loop? This can't be undone", dialog.QuerySelector("#courses-confirm-title")!.TextContent);
+        Assert.Equal("Cancel", dialog.QuerySelector(".courses-confirm-cancel")!.TextContent);
+        Assert.Equal("Delete", dialog.QuerySelector(".courses-confirm-delete")!.TextContent);
+
+        dialog.QuerySelector(".courses-confirm-cancel")!.Click();
+        Assert.Empty(cut.FindAll("[role='dialog']"));
+        Assert.Equal(3, cut.FindAll("tbody tr").Count);
+        Assert.Empty(_api.Deleted);
+
+        cut.Find("tbody tr .courses-delete").Click();
+        cut.Find(".courses-confirm-delete").Click();
+
+        Assert.Equal(new[] { _loop }, _api.Deleted);
+        Assert.Equal($"/api/courses/{_loop}?login=bud", _api.DeletedPaths[0]);
+        Assert.Empty(cut.FindAll("[role='dialog']"));
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal(2, rows.Count);
+        Assert.DoesNotContain("Poudre loop", cut.Markup);
+        Assert.Contains("Spring creek", rows[0].TextContent);
+        Assert.Contains("Mystery outing", rows[1].TextContent);
+    }
+
+    [Fact]
+    public void A_failed_delete_keeps_the_course_and_says_so()
+    {
+        SignIn();
+        _api.RejectDelete = true;
+        var cut = RenderComponent<Courses>();
+
+        cut.Find("tbody tr .courses-delete").Click();
+        cut.Find(".courses-confirm-delete").Click();
+
+        Assert.Equal(3, cut.FindAll("tbody tr").Count);
+        Assert.Contains("Poudre loop", cut.Markup);
+        Assert.Equal("That course was not deleted.", cut.Find("#courses-note").TextContent);
+        Assert.Empty(cut.FindAll("[role='dialog']"));
+    }
+
+    [Fact]
     public void An_empty_list_keeps_the_existing_empty_state()
     {
         SignIn();
@@ -120,6 +178,9 @@ public sealed class CoursesTests : TestContext
         public List<Course> Courses { get; } = [];
         public List<ActivityCode> Activities { get; } = [];
         public HashSet<Guid> WithIntervals { get; } = [];
+        public List<Guid> Deleted { get; } = [];
+        public List<string> DeletedPaths { get; } = [];
+        public bool RejectDelete { get; set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -133,6 +194,17 @@ public sealed class CoursesTests : TestContext
                     ? new[] { new CourseIntervalDto { Name = "1 mi" } }
                     : Array.Empty<CourseIntervalDto>();
                 return Json(body);
+            }
+            if (request.Method == HttpMethod.Delete && path.Contains("/courses/", StringComparison.OrdinalIgnoreCase))
+            {
+                var idText = path.Split('/', StringSplitOptions.RemoveEmptyEntries)[^1];
+                var id = Guid.Parse(idText);
+                Deleted.Add(id);
+                DeletedPaths.Add(path + request.RequestUri?.Query);
+                if (RejectDelete)
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+                Courses.RemoveAll(course => course.CourseId == id);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
             }
             if (path.EndsWith("/courses", StringComparison.OrdinalIgnoreCase))
                 return Json(Courses);
