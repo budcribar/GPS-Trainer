@@ -420,7 +420,6 @@ public class CourseListPage : ContentPage
     {
         Title = AppStrings.app_name;
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_options, null, () => Ui.Push(new PreferencesPage())));
-        ToolbarItems.Add(new ToolbarItem(AppStrings.menu_data, null, () => Ui.Push(new DataPage())));
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_gps_info, null, () => Ui.Push(new GpsInfoPage())));
         ToolbarItems.Add(new ToolbarItem(AppStrings.menu_about, null, () => Ui.Push(new AboutPage())));
         Content = new ScrollView
