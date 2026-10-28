@@ -428,7 +428,15 @@ public class CourseListPage : ContentPage
             Content = Ui.Column(
                 Ui.Heading("Courses"),
                 _list,
-                Ui.Command(AppStrings.menu_insert_course, () => Ui.Push(new CourseEditPage(null))),
+                Ui.Command(AppStrings.menu_insert_course, async () =>
+                {
+                    if (DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+                    {
+                        await DisplayAlertAsync(AppStrings.warning_title, DatabaseCompact.PleaseWait, AppStrings.confirm);
+                        return;
+                    }
+                    await Ui.Push(new CourseEditPage(null));
+                }),
                 Ui.Command("Import GPX", ImportGpx))
         };
     }
@@ -462,6 +470,8 @@ public class CourseListPage : ContentPage
 
     private static async Task ImportGpx()
     {
+        if (DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+            throw new InvalidOperationException(DatabaseCompact.PleaseWait);
         var session = Services.Current.GetRequiredService<AppSession>();
         if (string.IsNullOrEmpty(session.Token))
             throw new InvalidOperationException("Sign in before importing a GPX file.");
@@ -555,6 +565,11 @@ public class CourseEditPage : ContentPage
                 _course.ElapsedDistanceKm = _imported.Max(point => point.ElapsedDistanceKm);
         }
         var isNew = store.Database.ListCourses().All(c => c.CourseId != _course.CourseId);
+        if (isNew && DatabaseCompact.BlocksNewCourse(Services.Current.GetRequiredService<DatabaseMaintenance>().IsCompacting))
+        {
+            await DisplayAlertAsync(AppStrings.warning_title, DatabaseCompact.PleaseWait, AppStrings.confirm);
+            return;
+        }
         store.Database.UpsertCourse(_course);
         if (_imported is not null)
             store.Database.ReplaceWaypoints(_course.CourseId, _imported);
@@ -1665,10 +1680,31 @@ public class DataPage : ContentPage
         _status.Text = await Services.Current.GetRequiredService<SyncService>().SynchronizeAsync();
     }
 
-    private Task Compact()
+    private async Task Compact()
     {
-        _status.Text = "SQLite vacuum is available from the database file on device. The old CompactDatabaseService is not reimplemented as a separate Android service.";
-        return Task.CompletedTask;
+        var recording = Services.Current.GetRequiredService<RunSession>().State is RunStateKind.Learning or RunStateKind.Racing;
+        var maintenance = Services.Current.GetRequiredService<DatabaseMaintenance>();
+        if (!DatabaseCompact.ShouldStart(recording, maintenance.IsCompacting) || !maintenance.TryBegin())
+            return;
+        _status.Text = DatabaseCompact.PleaseWait;
+        try
+        {
+            var path = Services.Current.GetRequiredService<TrainerRepository>().Database.FilePath;
+            await Task.Run(() => LocalDatabase.Vacuum(path, TimeSpan.FromSeconds(30)));
+            await MainThread.InvokeOnMainThreadAsync(() =>
+            {
+                if (_status.Text == DatabaseCompact.PleaseWait)
+                    _status.Text = "";
+            });
+        }
+        catch (Exception)
+        {
+            await MainThread.InvokeOnMainThreadAsync(() => _status.Text = "The database was not compacted.");
+        }
+        finally
+        {
+            maintenance.End();
+        }
     }
 }
 

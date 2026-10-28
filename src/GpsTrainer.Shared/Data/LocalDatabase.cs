@@ -7,8 +7,11 @@ public sealed class LocalDatabase : IDisposable
 {
     private readonly SqliteConnection _connection;
 
+    public string FilePath { get; }
+
     public LocalDatabase(string path)
     {
+        FilePath = path;
         var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWriteCreate };
         _connection = new SqliteConnection(builder.ConnectionString);
         _connection.Open();
@@ -17,8 +20,32 @@ public sealed class LocalDatabase : IDisposable
     public LocalDatabase(SqliteConnection openConnection)
     {
         _connection = openConnection;
+        FilePath = openConnection.DataSource ?? "";
         if (_connection.State != System.Data.ConnectionState.Open)
             _connection.Open();
+    }
+
+    /// <summary>
+    /// SQLite VACUUM on its own connection. busy_timeout makes it wait until
+    /// other connections finish their writes.
+    /// </summary>
+    public static void Vacuum(string path, TimeSpan waitForWriters)
+    {
+        var wait = waitForWriters < TimeSpan.Zero ? TimeSpan.Zero : waitForWriters;
+        var milliseconds = (int)Math.Min(int.MaxValue, wait.TotalMilliseconds);
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadWrite
+        }.ConnectionString);
+        connection.Open();
+        using var timeout = connection.CreateCommand();
+        timeout.CommandText = "PRAGMA busy_timeout = " + milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        timeout.ExecuteNonQuery();
+        using var vacuum = connection.CreateCommand();
+        vacuum.CommandTimeout = (int)Math.Min(int.MaxValue, Math.Ceiling(wait.TotalSeconds) + 15);
+        vacuum.CommandText = "VACUUM";
+        vacuum.ExecuteNonQuery();
     }
 
     public void EnsureCreated()
