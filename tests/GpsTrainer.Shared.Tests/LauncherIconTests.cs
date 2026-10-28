@@ -40,6 +40,55 @@ public class LauncherIconTests
     }
 
     [Fact]
+    public void In_app_screens_use_the_runner_mark_at_a_96_dip_base()
+    {
+        var screens = File.ReadAllText(RepoFile("src/GpsTrainer.App/Pages/Screens.cs"));
+        var project = File.ReadAllText(RepoFile("src/GpsTrainer.App/GpsTrainer.App.csproj"));
+        Assert.Equal(2, Count(screens, "Source = \"runner.png\""));
+        Assert.DoesNotContain("gpstrainer.png", screens, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(RepoFile("src/GpsTrainer.App/GpsTrainer.App.csproj"))!, "Resources", "Images", "gpstrainer.png")));
+        Assert.Contains("Resources\\Images\\runner.png", project, StringComparison.Ordinal);
+        Assert.Contains("BaseSize=\"96,96\"", project, StringComparison.Ordinal);
+
+        var source = ReadRgba(RepoFile("src/GpsTrainer.App/Resources/AppIcon/appicon.png"));
+        var mark = ReadRgba(RepoFile("src/GpsTrainer.App/Resources/Images/runner.png"));
+        Assert.Equal(384, mark.Width);
+        Assert.Equal(384, mark.Height);
+        Assert.Equal(0, mark.Alpha(0, 0));
+        Assert.Equal(0, mark.Alpha(mark.Width - 1, mark.Height - 1));
+
+        var compared = 0;
+        var drift = 0;
+        for (var y = 0; y < mark.Height; y += 16)
+        {
+            for (var x = 0; x < mark.Width; x += 16)
+            {
+                var sx = Math.Min(source.Width - 1, x * source.Width / mark.Width);
+                var sy = Math.Min(source.Height - 1, y * source.Height / mark.Height);
+                var here = mark.Pixel(x, y);
+                var there = source.Pixel(sx, sy);
+                drift += Math.Abs(here.R - there.R) + Math.Abs(here.G - there.G)
+                    + Math.Abs(here.B - there.B) + Math.Abs(here.A - there.A);
+                compared++;
+            }
+        }
+        Assert.True(compared > 0);
+        Assert.True(drift / compared < 40, "The in-app mark drifted " + (drift / compared) + " from the runner artwork.");
+    }
+
+    private static int Count(string text, string value)
+    {
+        var count = 0;
+        var start = 0;
+        while ((start = text.IndexOf(value, start, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            start += value.Length;
+        }
+        return count;
+    }
+
+    [Fact]
     public void Play_icon_is_512_and_legacy_mipmaps_exist()
     {
         var play = ReadRgba(RepoFile("src/GpsTrainer.App/Resources/AppIcon/icon-512.png"));
@@ -160,6 +209,12 @@ public class LauncherIconTests
 
     private sealed record Rgba(int Width, int Height, byte[] Pixels)
     {
-        public int Alpha(int x, int y) => Pixels[(y * Width + x) * 4 + 3];
+        public int Alpha(int x, int y) => Pixel(x, y).A;
+
+        public (byte R, byte G, byte B, byte A) Pixel(int x, int y)
+        {
+            var index = (y * Width + x) * 4;
+            return (Pixels[index], Pixels[index + 1], Pixels[index + 2], Pixels[index + 3]);
+        }
     }
 }

@@ -250,7 +250,7 @@ public class LoginPage : ContentPage
         _message.IsVisible = false;
         var logo = new Image
         {
-            Source = "gpstrainer.png",
+            Source = "runner.png",
             HeightRequest = 56,
             WidthRequest = 56,
             HorizontalOptions = LayoutOptions.Center
@@ -881,6 +881,8 @@ public class RunningPage : ContentPage
     private readonly Grid _checkpointRow;
     private readonly Button _addWaypoint = new() { Text = "Add Waypoint", IsVisible = false };
     private readonly Button _useLocation = new() { Text = "Use location", IsVisible = false };
+    private readonly Button _start;
+    private readonly Button _finish;
     private View? _ride;
     private IDispatcherTimer? _timer;
     private bool _listening;
@@ -912,27 +914,37 @@ public class RunningPage : ContentPage
                 _addWaypoint
             }
         };
+        var run = Services.Current.GetRequiredService<RunSession>();
+        _start = Ui.Command(AppStrings.start, async () =>
+        {
+            Services.Current.GetRequiredService<RunSession>().Go();
+            await Refresh();
+        });
+        _finish = Ui.Command("Finish", async () =>
+        {
+            var session = Services.Current.GetRequiredService<RunSession>();
+            session.Finish();
+            await SaveTrace(session);
+            await Navigation.PopAsync();
+        });
+        ShowRideButtons(run.State);
         _ride = new ScrollView
         {
             Content = Ui.Column(readouts,
-                Ui.Command(AppStrings.start, async () =>
-                {
-                    Services.Current.GetRequiredService<RunSession>().Go();
-                    await Refresh();
-                }),
-                Ui.Command("Finish", async () =>
-                {
-                    var run = Services.Current.GetRequiredService<RunSession>();
-                    run.Finish();
-                    await SaveTrace(run);
-                    await Navigation.PopAsync();
-                }),
+                _start,
+                _finish,
                 Ui.Command(AppStrings.cancel, async () =>
                 {
                     Services.Current.GetRequiredService<RunSession>().Abort();
                     await Navigation.PopAsync();
                 }))
         };
+    }
+
+    private void ShowRideButtons(RunStateKind state)
+    {
+        _start.IsVisible = RideControls.ShowStart(state);
+        _finish.IsVisible = RideControls.ShowFinish(state);
     }
 
     private static Label ReadoutValue(string text) => new()
@@ -1125,6 +1137,7 @@ public class RunningPage : ContentPage
         _checkpointUnit.Text = run.CheckpointUnit;
         _checkpointRow.IsVisible = !run.Learning;
         _addWaypoint.IsVisible = run.Learning;
+        ShowRideButtons(run.State);
         var speech = run.TakeSpeech();
         if (speech.Count > 0)
             await Services.Current.GetRequiredService<SpeechFeedback>().SpeakAsync(speech);
@@ -1654,7 +1667,7 @@ public class AboutPage : ContentPage
     public AboutPage()
     {
         Title = AppStrings.menu_about;
-        var icon = new Image { Source = "gpstrainer.png", HeightRequest = 96, WidthRequest = 96 };
+        var icon = new Image { Source = "runner.png", HeightRequest = 96, WidthRequest = 96 };
         var tap = new TapGestureRecognizer();
         tap.Tapped += (_, _) =>
         {
