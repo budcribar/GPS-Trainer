@@ -132,6 +132,18 @@ public sealed class GpsApi
         return await response.Content.ReadFromJsonAsync<Course>();
     }
 
+    public async Task<bool> DeleteCourseAsync(Guid courseId)
+    {
+        if (string.IsNullOrEmpty(_session.Login) || courseId == Guid.Empty)
+            return false;
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"api/courses/{courseId}?login={Uri.EscapeDataString(_session.Login)}");
+        Authorize(request);
+        var response = await _http.SendAsync(request);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<bool> SaveWaypointsAsync(Guid courseId, IReadOnlyList<Waypoint> waypoints)
     {
         var response = await SendAsync(HttpMethod.Put, $"api/courses/{courseId}/waypoints", waypoints);
