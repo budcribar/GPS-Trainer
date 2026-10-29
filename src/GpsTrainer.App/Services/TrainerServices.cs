@@ -367,6 +367,7 @@ public sealed class SyncService
     private readonly TrainerRepository _store;
     private readonly TrainerApi _api;
     private readonly AppSession _session;
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
     public SyncService(TrainerRepository store, TrainerApi api, AppSession session)
     {
@@ -375,7 +376,62 @@ public sealed class SyncService
         _session = session;
     }
 
+    /// <summary>
+    /// The existing synchronize, started after Finish has stored the track.
+    /// A ride, a sync already in progress, a signed-out user, or no network
+    /// returns without a message. An inactive license does the same, because
+    /// the result of <see cref="SynchronizeAsync"/> is discarded.
+    /// </summary>
+    public async Task SynchronizeAfterFinishAsync(Func<bool> recording)
+    {
+        if (!Ready(recording()))
+            return;
+        if (!await _gate.WaitAsync(0).ConfigureAwait(false))
+            return;
+        try
+        {
+            if (!Ready(recording()))
+                return;
+            await SynchronizeCoreAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<string> SynchronizeAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await SynchronizeCoreAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private bool Ready(bool recording) =>
+        BackgroundSync.ShouldRun(recording, alreadyRunning: false, BackgroundSync.IsSignedIn(_session.User?.Login), Online());
+
+    private static bool Online()
+    {
+        try
+        {
+            return Connectivity.NetworkAccess == NetworkAccess.Internet;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private async Task<string> SynchronizeCoreAsync()
     {
         var login = _session.User?.Login;
         if (login is null)
@@ -391,7 +447,7 @@ public sealed class SyncService
         }
         if (status is null)
             return AppStrings.server_unavailable;
-        if (!status.IsActive || status.ExpirationDate < DateTime.UtcNow)
+        if (!BackgroundSync.LicenseAllows(status.IsActive, status.ExpirationDate, DateTime.UtcNow))
             return AppStrings.license_expired;
 
         var notes = new List<string>();

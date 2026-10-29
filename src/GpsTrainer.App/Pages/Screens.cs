@@ -946,9 +946,10 @@ public class RunningPage : ContentPage
         });
         _finish = Ui.Command("Finish", async () =>
         {
-            var session = Services.Current.GetRequiredService<RunSession>();
-            session.Finish();
-            await SaveTrace(session);
+            var run = Services.Current.GetRequiredService<RunSession>();
+            run.Finish();
+            await SaveTrace(run);
+            QueueSynchronize();
             await Navigation.PopAsync();
         });
         ShowRideButtons(run.State);
@@ -963,6 +964,34 @@ public class RunningPage : ContentPage
                     await Navigation.PopAsync();
                 }))
         };
+    }
+
+    private static void QueueSynchronize()
+    {
+        var sync = Services.Current.GetRequiredService<SyncService>();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await sync.SynchronizeAfterFinishAsync(RideInProgress);
+            }
+            catch (Exception)
+            {
+            }
+        });
+    }
+
+    private static bool RideInProgress()
+    {
+        try
+        {
+            var state = Services.Current.GetRequiredService<RunSession>().State;
+            return state is RunStateKind.Learning or RunStateKind.Racing;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
     }
 
     private void ShowRideButtons(RunStateKind state)

@@ -103,7 +103,7 @@ def clear_blockers() -> ET.Element | None:
     the next tap.
     """
     root = None
-    for _ in range(4):
+    for _ in range(8):
         root = dump("blocker.xml")
         if root is None:
             time.sleep(1)
@@ -111,7 +111,7 @@ def clear_blockers() -> ET.Element | None:
         if is_anr(root):
             print("App was slow; dismissing the not-responding dialog.")
             tap(find(root, "Wait"))
-            time.sleep(2)
+            time.sleep(3)
             continue
         return root
     return root
@@ -248,7 +248,7 @@ def open_toolbar(title: str) -> bool:
 
 
 def visit(title: str, image: str) -> bool:
-    for _ in range(2):
+    for _ in range(4):
         if open_toolbar(title):
             time.sleep(1.2)
             shot(image)
