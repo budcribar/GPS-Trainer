@@ -14,6 +14,13 @@ public partial class App : Application
 
 	protected override Window CreateWindow(IActivationState? activationState)
 	{
-		return new Window(new NavigationPage(new LoginPage()));
+		var window = new Window(new NavigationPage(new LoginPage()));
+		var services = IPlatformApplication.Current?.Services ?? Handler?.MauiContext?.Services;
+		if (services is not null)
+		{
+			_ = services.GetRequiredService<CourseScreenSync>();
+			services.GetRequiredService<ForegroundSync>().Attach(window);
+		}
+		return window;
 	}
 }

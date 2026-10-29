@@ -322,6 +322,14 @@ public class LoginPage : ContentPage
         var token = await push.RegisterAsync();
         if (!string.IsNullOrEmpty(token))
             await api.RegisterPushAsync(login, token);
+        try
+        {
+            Services.Current.GetRequiredService<ForegroundSync>().Nudge();
+        }
+        catch (Exception)
+        {
+            // Sign-in still opens the course list when a sync cannot be queued.
+        }
         await Ui.Push(new CourseListPage());
     }
 
@@ -443,6 +451,11 @@ public class CourseListPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        Reload();
+    }
+
+    public void Reload()
+    {
         _list.Clear();
         var store = Services.Current.GetRequiredService<TrainerRepository>();
         var login = Services.Current.GetRequiredService<AppSession>().User?.Login;
@@ -508,6 +521,8 @@ public class CourseEditPage : ContentPage
     private readonly Entry _name = Ui.Box(AppStrings.course_name);
     private readonly Entry _comments = Ui.Box(AppStrings.course_comments);
     private readonly Picker _activity = new() { Title = AppStrings.course_activity };
+
+    public Guid CourseId => _course.CourseId;
 
     public CourseEditPage(Course? existing, IReadOnlyList<Waypoint>? imported = null)
     {
@@ -583,6 +598,8 @@ public class CourseDetailsPage : ContentPage
     private readonly Course _course;
     private readonly LeafletMap _map = new();
     private readonly Label _distance = new();
+
+    public Guid CourseId => _course.CourseId;
 
     public CourseDetailsPage(Course course)
     {
@@ -673,6 +690,8 @@ public class RaceListPage : ContentPage
     private readonly Course _course;
     private readonly VerticalStackLayout _list = new() { Spacing = 8 };
 
+    public Guid CourseId => _course.CourseId;
+
     public RaceListPage(Course course)
     {
         _course = course;
@@ -686,6 +705,11 @@ public class RaceListPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        Reload();
+    }
+
+    public void Reload()
+    {
         _list.Clear();
         var races = Services.Current.GetRequiredService<TrainerRepository>().Database.ListRaces(_course.CourseId);
         if (races.Count == 0)
@@ -1324,6 +1348,8 @@ public class MapCoursePage : ContentPage
     private readonly Label _notice = new();
     private readonly Button _undo = new() { Text = "Undo last segment" };
     private bool _busy;
+
+    public Guid CourseId => _course.CourseId;
 
     public MapCoursePage(Course course)
     {
