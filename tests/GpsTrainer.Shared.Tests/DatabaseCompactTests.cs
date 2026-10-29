@@ -41,7 +41,8 @@ public class DatabaseCompactTests
             await using var holder = new SqliteConnection(new SqliteConnectionStringBuilder
             {
                 DataSource = path,
-                Mode = SqliteOpenMode.ReadWrite
+                Mode = SqliteOpenMode.ReadWrite,
+                Pooling = false
             }.ConnectionString);
             await holder.OpenAsync();
             await using var hold = holder.CreateCommand();
@@ -70,6 +71,38 @@ public class DatabaseCompactTests
                 if (File.Exists(file))
                     File.Delete(file);
             }
+        }
+    }
+
+    [Fact]
+    public async Task LocalDatabase_serializes_concurrent_reads_and_writes()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "gpstrainer-concurrent-" + Guid.NewGuid().ToString("N") + ".db");
+        try
+        {
+            using var db = new LocalDatabase(path);
+            db.EnsureCreated();
+            var raceId = Guid.NewGuid();
+            var courseId = Guid.NewGuid();
+            db.UpsertCourse(new Course { CourseId = courseId, Name = "Loop", Login = "bud", Timestamp = DateTime.UnixEpoch });
+            db.UpsertRace(new Race { RaceId = raceId, CourseId = courseId, Login = "bud", StartTime = DateTime.UnixEpoch, FinishTime = DateTime.UnixEpoch, Timestamp = DateTime.UnixEpoch });
+
+            var tasks = Enumerable.Range(0, 8).Select(worker => Task.Run(() =>
+            {
+                for (var i = 0; i < 25; i++)
+                {
+                    db.InsertPosition(new TrackPoint { RaceId = raceId, Latitude = 40 + i * 0.0001, Longitude = -105, TimestampTicks = worker * 1000L + i });
+                    _ = db.ListCourses("bud");
+                    _ = db.ListPositions(raceId);
+                }
+            }));
+            await Task.WhenAll(tasks);
+            Assert.Equal(200, db.ListPositions(raceId).Count);
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
         }
     }
 }

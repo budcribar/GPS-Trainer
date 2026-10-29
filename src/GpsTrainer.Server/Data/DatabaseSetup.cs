@@ -14,6 +14,12 @@ public static class DatabaseSetup
 
         if (string.IsNullOrWhiteSpace(provider) || provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
+            var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+            if (!connectionString.Contains("Pooling", StringComparison.OrdinalIgnoreCase) && builder.Mode != Microsoft.Data.Sqlite.SqliteOpenMode.Memory)
+            {
+                builder.Pooling = false;
+                connectionString = builder.ConnectionString;
+            }
             options.UseSqlite(connectionString);
             return;
         }

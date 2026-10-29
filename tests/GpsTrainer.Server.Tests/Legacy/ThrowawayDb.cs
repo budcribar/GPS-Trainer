@@ -18,7 +18,7 @@ public sealed class ThrowawayDb : IDisposable
     public ThrowawayDb()
     {
         _path = Path.Combine(Path.GetTempPath(), "gpstrainer-legacy-" + Guid.NewGuid().ToString("N") + ".db");
-        var options = new DbContextOptionsBuilder<GpsTrainerDb>().UseSqlite("Data Source=" + _path).Options;
+        var options = new DbContextOptionsBuilder<GpsTrainerDb>().UseSqlite("Data Source=" + _path + ";Pooling=False").Options;
         Db = new GpsTrainerDb(options);
         Db.Database.EnsureCreated();
     }

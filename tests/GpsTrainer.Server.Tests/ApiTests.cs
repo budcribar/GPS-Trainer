@@ -434,6 +434,10 @@ public class ApiTests : IClassFixture<ApiFactory>
         }
 
         using var anonymous = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync($"/api/races/{published.RaceId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync($"/api/races/{priv.RaceId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/races/{priv.RaceId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/races/{priv.RaceId}")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/races/{published.RaceId}/positions")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await stranger.GetAsync($"/api/races/{published.RaceId}/positions")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await stranger.PostAsync($"/api/races/{priv.RaceId}/enable-download?login=trail-stranger", null)).StatusCode);
@@ -450,6 +454,19 @@ public class ApiTests : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/courses/{course.CourseId}", course)).StatusCode);
         var rows = await anonymous.GetFromJsonAsync<List<IntervalResultDto>>($"/api/courses/{course.CourseId}/interval-results");
         Assert.NotNull(rows);
+    }
+
+    [Fact]
+    public async Task User_signup_rejects_pipe_delimiter_in_login()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/users", new UserWriteDto
+        {
+            Login = "bad|login",
+            Password = "secret",
+            Email = "pipe@example.com"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     private static async Task<string> Token(HttpClient client, string login)

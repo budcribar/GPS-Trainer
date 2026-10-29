@@ -80,15 +80,21 @@
         var loadedActivities = Api.ActivitiesAsync();
         courses = await loadedCourses;
         activities = await loadedActivities;
-        var flagged = await Task.WhenAll(courses.Select(async course =>
+        foreach (var course in courses.Where(course => course.HasIntervals == true))
+            withIntervals.Add(course.CourseId);
+        var unknown = courses.Where(course => course.HasIntervals is null).ToList();
+        if (unknown.Count > 0)
         {
-            var intervals = await Api.IntervalsAsync(course.CourseId);
-            return (course.CourseId, intervals.Count > 0);
-        }));
-        foreach (var (id, hasIntervals) in flagged)
-        {
-            if (hasIntervals)
-                withIntervals.Add(id);
+            var flagged = await Task.WhenAll(unknown.Select(async course =>
+            {
+                var intervals = await Api.IntervalsAsync(course.CourseId);
+                return (course.CourseId, intervals.Count > 0);
+            }));
+            foreach (var (id, hasIntervals) in flagged)
+            {
+                if (hasIntervals)
+                    withIntervals.Add(id);
+            }
         }
     }
 

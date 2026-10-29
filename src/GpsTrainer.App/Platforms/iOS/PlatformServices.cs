@@ -6,16 +6,46 @@ namespace GpsTrainer.App;
 
 public sealed partial class PackageAudioPlayer
 {
+    private static readonly object Gate = new();
+    private static AVAudioPlayer? _activePlayer;
+    private static AVAudioPlayer? _loopPlayer;
+
     private static partial Task PlayFileAsync(string path, bool loop)
     {
-        var url = NSUrl.FromFilename(path);
-        var player = AVAudioPlayer.FromUrl(url, out _);
-        if (player is null)
-            return Task.CompletedTask;
-        player.NumberOfLoops = loop ? -1 : 0;
-        player.PrepareToPlay();
-        player.Play();
+        lock (Gate)
+        {
+            if (loop && _loopPlayer is { Playing: true })
+                return Task.CompletedTask;
+            var url = NSUrl.FromFilename(path);
+            var player = AVAudioPlayer.FromUrl(url, out _);
+            if (player is null)
+                return Task.CompletedTask;
+            player.NumberOfLoops = loop ? -1 : 0;
+            player.PrepareToPlay();
+            player.Play();
+            if (loop)
+            {
+                _loopPlayer?.Stop();
+                _loopPlayer?.Dispose();
+                _loopPlayer = player;
+            }
+            else
+            {
+                _activePlayer?.Dispose();
+                _activePlayer = player;
+            }
+        }
         return Task.CompletedTask;
+    }
+
+    internal static void StopLoop()
+    {
+        lock (Gate)
+        {
+            _loopPlayer?.Stop();
+            _loopPlayer?.Dispose();
+            _loopPlayer = null;
+        }
     }
 }
 
@@ -34,7 +64,11 @@ public partial class TrackingHost
     private static readonly BackgroundLocationSession Session = new();
 
     partial void StartPlatform() => Session.Start();
-    partial void StopPlatform() => Session.Stop();
+    partial void StopPlatform()
+    {
+        PackageAudioPlayer.StopLoop();
+        Session.Stop();
+    }
 }
 
 sealed class BackgroundLocationSession

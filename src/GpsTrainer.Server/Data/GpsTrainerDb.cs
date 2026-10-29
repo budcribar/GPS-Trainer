@@ -48,6 +48,8 @@ public sealed class CourseRow
     public int Laps { get; set; } = 1;
     public double AltitudeLossKm { get; set; }
     public bool WaypointsVerified { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool? HasIntervals { get; set; }
     public DateTime Timestamp { get; set; }
     public DateTime WaypointTimestamp { get; set; }
 }

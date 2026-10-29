@@ -65,6 +65,7 @@ public sealed class Course
     public string? Description { get; set; }
     public DateTime? RaceDate { get; set; }
     public bool WaypointsVerified { get; set; }
+    public bool? HasIntervals { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UnixEpoch;
     public DateTime WaypointTimestamp { get; set; } = DateTime.UnixEpoch;
     public List<Waypoint> Waypoints { get; set; } = [];

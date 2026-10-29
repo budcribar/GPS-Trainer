@@ -113,11 +113,16 @@ public static partial class GpsEndpoints
                 : CourseIntervals.Pair(waypoints).ToList();
             TryLogin(http, config, out var viewer);
             var races = await db.Races.Where(r => r.CourseId == id && (r.Publish || r.Login == viewer)).ToListAsync();
+            var raceIds = races.Select(r => r.RaceId).ToList();
+            var positionsByRace = (await db.Positions
+                .Where(p => raceIds.Contains(p.RaceId))
+                .OrderBy(p => p.TimestampTicks)
+                .ToListAsync())
+                .ToLookup(p => p.RaceId);
             var results = new List<IntervalResultDto>();
             foreach (var race in races.OrderBy(r => r.StartTime))
             {
-                var positions = await db.Positions.Where(p => p.RaceId == race.RaceId).OrderBy(p => p.TimestampTicks).ToListAsync();
-                var track = positions.Select(p => new TrackPoint
+                var track = positionsByRace[race.RaceId].Select(p => new TrackPoint
                 {
                     RaceId = p.RaceId,
                     TimestampTicks = p.TimestampTicks,
@@ -177,88 +182,115 @@ public static partial class GpsEndpoints
 
         api.MapPost("/courses/{id:guid}/intervals", async (Guid id, PlaceIntervalRequest body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            var waypoints = await LoadWaypoints(db, id);
-            (IReadOnlyList<Waypoint> merged, CourseIntervalDefinition interval) placed;
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
             try
             {
-                placed = IntervalCourse.Place(waypoints, id, body.Name, body.StartElapsedKm, body.FinishElapsedKm);
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var waypoints = await LoadWaypoints(db, id);
+                (IReadOnlyList<Waypoint> merged, CourseIntervalDefinition interval) placed;
+                try
+                {
+                    placed = IntervalCourse.Place(waypoints, id, body.Name, body.StartElapsedKm, body.FinishElapsedKm);
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(ex.Message);
+                }
+                WriteWaypoints(db, id, placed.merged);
+                var previous = (await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync()).Select(ToDefinition).ToList();
+                var all = IntervalCourse.FromMarkers(id, placed.merged).ToList();
+                KeepIntervalIds(previous, all);
+                var created = all.Single(item => item.StartTimestampTicks == placed.interval.StartTimestampTicks);
+                created.IntervalId = placed.interval.IntervalId;
+                created.Name = body.Name ?? "";
+                ReplaceIntervalRows(db, id, all);
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.Ok(ToDto(created));
             }
-            catch (ArgumentException ex)
+            finally
             {
-                return Results.BadRequest(ex.Message);
+                gate.Release();
             }
-            WriteWaypoints(db, id, placed.merged);
-            var previous = (await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync()).Select(ToDefinition).ToList();
-            var all = IntervalCourse.FromMarkers(id, placed.merged).ToList();
-            KeepIntervalIds(previous, all);
-            var created = all.Single(item => item.StartTimestampTicks == placed.interval.StartTimestampTicks);
-            created.IntervalId = placed.interval.IntervalId;
-            created.Name = body.Name ?? "";
-            ReplaceIntervalRows(db, id, all);
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.Ok(ToDto(created));
         });
 
         api.MapPost("/courses/{id:guid}/intervals/{intervalId:guid}/move", async (Guid id, Guid intervalId, MoveIntervalDistanceRequest body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            var row = await db.CourseIntervals.FindAsync(intervalId);
-            if (row is null || row.CourseId != id)
-                return Results.NotFound();
-            var waypoints = await LoadWaypoints(db, id);
-            var definition = ToDefinition(row);
-            IReadOnlyList<Waypoint> moved;
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
             try
             {
-                moved = IntervalCourse.Move(waypoints, definition, body.StartElapsedKm, body.FinishElapsedKm);
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var row = await db.CourseIntervals.FindAsync(intervalId);
+                if (row is null || row.CourseId != id)
+                    return Results.NotFound();
+                var waypoints = await LoadWaypoints(db, id);
+                var definition = ToDefinition(row);
+                IReadOnlyList<Waypoint> moved;
+                try
+                {
+                    moved = IntervalCourse.Move(waypoints, definition, body.StartElapsedKm, body.FinishElapsedKm);
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(ex.Message);
+                }
+                WriteWaypoints(db, id, moved);
+                var previous = (await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync()).Select(ToDefinition).ToList();
+                var all = IntervalCourse.FromMarkers(id, moved).ToList();
+                KeepIntervalIds(previous, all);
+                var updated = all.Single(item => item.StartTimestampTicks == definition.StartTimestampTicks);
+                updated.IntervalId = definition.IntervalId;
+                updated.Name = definition.Name;
+                ReplaceIntervalRows(db, id, all);
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.Ok(ToDto(updated));
             }
-            catch (ArgumentException ex)
+            finally
             {
-                return Results.BadRequest(ex.Message);
+                gate.Release();
             }
-            WriteWaypoints(db, id, moved);
-            var previous = (await db.CourseIntervals.Where(i => i.CourseId == id).ToListAsync()).Select(ToDefinition).ToList();
-            var all = IntervalCourse.FromMarkers(id, moved).ToList();
-            KeepIntervalIds(previous, all);
-            var updated = all.Single(item => item.StartTimestampTicks == definition.StartTimestampTicks);
-            updated.IntervalId = definition.IntervalId;
-            updated.Name = definition.Name;
-            ReplaceIntervalRows(db, id, all);
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.Ok(ToDto(updated));
         });
 
         api.MapDelete("/courses/{id:guid}/intervals/{intervalId:guid}", async (Guid id, Guid intervalId, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            var row = await db.CourseIntervals.FindAsync(intervalId);
-            if (row is null || row.CourseId != id)
-                return Results.NotFound();
-            var waypoints = await LoadWaypoints(db, id);
-            var kept = waypoints.Where(w => w.TimestampTicks != row.StartTimestampTicks && w.TimestampTicks != row.FinishTimestampTicks).ToList();
-            WriteWaypoints(db, id, kept);
-            var previous = (await db.CourseIntervals.Where(i => i.CourseId == id && i.IntervalId != intervalId).ToListAsync()).Select(ToDefinition).ToList();
-            var rest = IntervalCourse.FromMarkers(id, kept).ToList();
-            KeepIntervalIds(previous, rest);
-            ReplaceIntervalRows(db, id, rest);
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.NoContent();
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
+            try
+            {
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var row = await db.CourseIntervals.FindAsync(intervalId);
+                if (row is null || row.CourseId != id)
+                    return Results.NotFound();
+                var waypoints = await LoadWaypoints(db, id);
+                var kept = waypoints.Where(w => w.TimestampTicks != row.StartTimestampTicks && w.TimestampTicks != row.FinishTimestampTicks).ToList();
+                WriteWaypoints(db, id, kept);
+                var previous = (await db.CourseIntervals.Where(i => i.CourseId == id && i.IntervalId != intervalId).ToListAsync()).Select(ToDefinition).ToList();
+                var rest = IntervalCourse.FromMarkers(id, kept).ToList();
+                KeepIntervalIds(previous, rest);
+                ReplaceIntervalRows(db, id, rest);
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.NoContent();
+            }
+            finally
+            {
+                gate.Release();
+            }
         });
 
         api.MapGet("/courses/{id:guid}/export/gpx", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
@@ -320,61 +352,78 @@ public static partial class GpsEndpoints
 
         api.MapPost("/courses/{id:guid}/import/gpx", async (Guid id, HttpRequest request, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            using var reader = new StreamReader(request.Body);
-            var xml = await reader.ReadToEndAsync();
-            if (xml.Length > GpxCourse.MaxCharacters)
-                return Results.BadRequest("GPX file is too large.");
-            GpxCourseDocument imported;
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
             try
             {
-                imported = GpxCourse.Import(xml);
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var xml = await ReadGpxAsync(request.Body);
+                if (xml is null)
+                    return Results.BadRequest("GPX file is too large.");
+                GpxCourseDocument imported;
+                try
+                {
+                    imported = GpxCourse.Import(xml);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or XmlException)
+                {
+                    return Results.BadRequest(ex.Message);
+                }
+                if (!imported.HasGpsTrainerExtensions)
+                    return Results.BadRequest("This GPX file has no gpsTrainer interval extensions.");
+                foreach (var wp in imported.Waypoints)
+                    wp.CourseId = id;
+                foreach (var interval in imported.Intervals)
+                {
+                    interval.CourseId = id;
+                    if (interval.IntervalId == Guid.Empty)
+                        interval.IntervalId = Guid.NewGuid();
+                }
+                WriteWaypoints(db, id, imported.Waypoints);
+                ReplaceIntervalRows(db, id, imported.Intervals);
+                if (!string.IsNullOrWhiteSpace(imported.Name))
+                    course.Name = imported.Name;
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.Ok(imported.Intervals.Select(ToDto));
             }
-            catch (Exception ex) when (ex is InvalidOperationException or XmlException)
+            finally
             {
-                return Results.BadRequest(ex.Message);
+                gate.Release();
             }
-            if (!imported.HasGpsTrainerExtensions)
-                return Results.BadRequest("This GPX file has no gpsTrainer interval extensions.");
-            foreach (var wp in imported.Waypoints)
-                wp.CourseId = id;
-            foreach (var interval in imported.Intervals)
-            {
-                interval.CourseId = id;
-                if (interval.IntervalId == Guid.Empty)
-                    interval.IntervalId = Guid.NewGuid();
-            }
-            WriteWaypoints(db, id, imported.Waypoints);
-            ReplaceIntervalRows(db, id, imported.Intervals);
-            if (!string.IsNullOrWhiteSpace(imported.Name))
-                course.Name = imported.Name;
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.Ok(imported.Intervals.Select(ToDto));
         });
 
         api.MapPost("/courses/{id:guid}/intervals/move", async (Guid id, MoveIntervalRequest body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
-            var course = await db.Courses.FindAsync(id);
-            if (course is null)
-                return Results.NotFound();
-            if (!CanReadUser(http, config, course.Login))
-                return Results.Unauthorized();
-            var start = await db.Waypoints.FindAsync(id, body.PreviousStartTicks);
-            var finish = await db.Waypoints.FindAsync(id, body.PreviousFinishTicks);
-            if (start is null || finish is null)
-                return Results.NotFound();
-            db.Waypoints.Remove(start);
-            db.Waypoints.Remove(finish);
-            db.Waypoints.Add(ToRow(id, body.NewStart, WaypointType.StartInterval));
-            db.Waypoints.Add(ToRow(id, body.NewFinish, WaypointType.FinishInterval));
-            course.WaypointTimestamp = DateTime.UtcNow;
-            await db.SaveChangesAsync();
-            return Results.NoContent();
+            var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(http.RequestAborted);
+            try
+            {
+                var course = await db.Courses.FindAsync(id);
+                if (course is null)
+                    return Results.NotFound();
+                if (!CanReadUser(http, config, course.Login))
+                    return Results.Unauthorized();
+                var start = await db.Waypoints.FindAsync(id, body.PreviousStartTicks);
+                var finish = await db.Waypoints.FindAsync(id, body.PreviousFinishTicks);
+                if (start is null || finish is null)
+                    return Results.NotFound();
+                db.Waypoints.Remove(start);
+                db.Waypoints.Remove(finish);
+                db.Waypoints.Add(ToRow(id, body.NewStart, WaypointType.StartInterval));
+                db.Waypoints.Add(ToRow(id, body.NewFinish, WaypointType.FinishInterval));
+                course.WaypointTimestamp = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.NoContent();
+            }
+            finally
+            {
+                gate.Release();
+            }
         });
 
         api.MapGet("/courses/published", async (double? latitude, double? longitude, double? radiusKm, GpsTrainerDb db) =>
@@ -382,12 +431,18 @@ public static partial class GpsEndpoints
             var courses = await db.Courses.Where(c => c.Publish && c.Approved).ToListAsync();
             if (latitude is null || longitude is null)
                 return Results.Ok(courses);
+            var courseIds = courses.Select(c => c.CourseId).ToList();
+            var firstWaypoints = (await db.Waypoints
+                .Where(w => courseIds.Contains(w.CourseId))
+                .OrderBy(w => w.TimestampTicks)
+                .ToListAsync())
+                .GroupBy(w => w.CourseId)
+                .ToDictionary(g => g.Key, g => g.First());
             var radius = (radiusKm ?? 50) * 1000;
             var nearby = new List<CourseRow>();
             foreach (var course in courses)
             {
-                var first = await db.Waypoints.Where(w => w.CourseId == course.CourseId).OrderBy(w => w.TimestampTicks).FirstOrDefaultAsync();
-                if (first is null)
+                if (!firstWaypoints.TryGetValue(course.CourseId, out var first))
                     continue;
                 if (GeoMath.DistanceMeters(latitude.Value, longitude.Value, first.Latitude, first.Longitude) <= radius)
                     nearby.Add(course);

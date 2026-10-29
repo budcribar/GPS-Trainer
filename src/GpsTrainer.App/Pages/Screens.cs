@@ -865,6 +865,13 @@ public class StagingPage : ContentPage
         if (_listening)
         {
             Geolocation.LocationChanged -= OnLocation;
+            try
+            {
+                Geolocation.StopListeningForeground();
+            }
+            catch (Exception)
+            {
+            }
             _listening = false;
         }
         base.OnDisappearing();
@@ -933,8 +940,10 @@ public class RunningPage : ContentPage
     private readonly Button _finish;
     private View? _ride;
     private IDispatcherTimer? _timer;
+    private IDispatcherTimer? _simTimer;
     private bool _listening;
     private bool _tracking;
+    private bool _keepAliveStarted;
     private bool _locationOff;
     private const string LocationChoiceKey = "BackgroundLocationChoice";
     private const string LocationOffMessage = "Location is off. This ride will not record a track.";
@@ -1185,6 +1194,21 @@ public class RunningPage : ContentPage
 
     private void StopTracking()
     {
+        _simTimer?.Stop();
+        _simTimer = null;
+        if (_listening)
+        {
+            Geolocation.LocationChanged -= OnLocationChanged;
+            try
+            {
+                Geolocation.StopListeningForeground();
+            }
+            catch (Exception)
+            {
+            }
+            _listening = false;
+        }
+        _keepAliveStarted = false;
         if (!_tracking)
             return;
         Services.Current.GetRequiredService<TrackingHost>().Stop();
@@ -1218,23 +1242,29 @@ public class RunningPage : ContentPage
         var speech = run.TakeSpeech();
         if (speech.Count > 0)
             await Services.Current.GetRequiredService<SpeechFeedback>().SpeakAsync(speech);
-        if (Preferences.Get("KeepAudioHeadphonesAlive", false)
+        if (!_keepAliveStarted
+            && Preferences.Get("KeepAudioHeadphonesAlive", false)
             && Services.Current.GetRequiredService<IBluetoothDevices>().IsAudioDevicePaired())
+        {
+            _keepAliveStarted = true;
             await Services.Current.GetRequiredService<IAudioCuePlayer>().PlayAsync(AudioCue.Silence);
+        }
     }
 
     private void StartSimulator()
     {
+        if (_simTimer is not null)
+            return;
         var lat = 40.015;
         var lon = -105.27;
-        var timer = Dispatcher.CreateTimer();
-        timer.Interval = TimeSpan.FromSeconds(1);
-        timer.Tick += (_, _) =>
+        _simTimer = Dispatcher.CreateTimer();
+        _simTimer.Interval = TimeSpan.FromSeconds(1);
+        _simTimer.Tick += (_, _) =>
         {
             lat += 0.00008;
             Services.Current.GetRequiredService<RunSession>().OnSample(lat, lon, 5, 4.5, DateTime.UtcNow);
         };
-        timer.Start();
+        _simTimer.Start();
     }
 
     private async Task Listen()
@@ -1245,23 +1275,27 @@ public class RunningPage : ContentPage
         try
         {
             var request = new GeolocationListeningRequest(GeolocationAccuracy.Best, TimeSpan.FromSeconds(1));
-            Geolocation.LocationChanged += (_, args) =>
-            {
-                var loc = args.Location;
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    var detected = Services.Current.GetRequiredService<RunSession>().OnSample(
-                        loc.Latitude, loc.Longitude, loc.Accuracy, loc.Speed, loc.Timestamp.UtcDateTime, loc.Course, loc.Altitude);
-                    if (detected is not null)
-                        StoreLearnedWaypoint(detected);
-                });
-            };
+            Geolocation.LocationChanged += OnLocationChanged;
             await Geolocation.StartListeningForegroundAsync(request);
         }
         catch (Exception ex)
         {
+            Geolocation.LocationChanged -= OnLocationChanged;
+            _listening = false;
             _state.Text = ex.Message;
         }
+    }
+
+    private void OnLocationChanged(object? sender, GeolocationLocationChangedEventArgs args)
+    {
+        var loc = args.Location;
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            var detected = Services.Current.GetRequiredService<RunSession>().OnSample(
+                loc.Latitude, loc.Longitude, loc.Accuracy, loc.Speed, loc.Timestamp.UtcDateTime, loc.Course, loc.Altitude);
+            if (detected is not null)
+                StoreLearnedWaypoint(detected);
+        });
     }
 
     private static async Task<bool> EnsureLocationPermission()
@@ -1787,7 +1821,7 @@ public class AboutPage : ContentPage
         Content = new ScrollView
         {
             Content = Ui.Column(icon, Ui.Heading(AppStrings.app_name),
-                new Label { Text = AppStrings.rev + " 1.48" },
+                new Label { Text = AppStrings.rev + " 1.49" },
                 new Label { Text = AppStrings.build + " 20131013" },
                 new Label { Text = AppStrings.peak_software, LineBreakMode = LineBreakMode.WordWrap })
         };
@@ -1856,5 +1890,14 @@ public class LeafletMap : WebView
         WaypointTapped?.Invoke(this, (latitude, longitude));
     }
 
-    private static string Escape(string value) => value.Replace("'", "").Replace("&", "&amp;");
+    private static string Escape(string value) =>
+        value
+            .Replace("&", "&amp;")
+            .Replace("<", "&lt;")
+            .Replace(">", "&gt;")
+            .Replace("\"", "&quot;")
+            .Replace("\\", "\\\\")
+            .Replace("'", "\\'")
+            .Replace("\r", " ")
+            .Replace("\n", " ");
 }

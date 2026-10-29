@@ -42,7 +42,7 @@ public static partial class GpsEndpoints
             if (string.IsNullOrWhiteSpace(body.Login) || string.IsNullOrWhiteSpace(body.Password))
                 return Results.BadRequest(new InsertUserResponse { Result = "MissingLogin" });
             var login = body.Login.TrimEnd();
-            if (login.Length > 32)
+            if (login.Length > 32 || login.Contains('|'))
                 return Results.BadRequest(new InsertUserResponse { Result = "MissingLogin" });
             if (await db.Users.AnyAsync(u => u.Login.ToLower() == login.ToLower()))
                 return Results.Ok(new InsertUserResponse { Result = SoapContract.DuplicateUserName });
@@ -169,6 +169,34 @@ public static partial class GpsEndpoints
                 return Results.Unauthorized();
             var ids = await db.CourseDownloads.Where(d => d.Login == login).Select(d => d.CourseId).ToListAsync();
             var courses = await db.Courses.Where(c => ids.Contains(c.CourseId)).ToListAsync();
+            var withIntervals = (await db.CourseIntervals
+                .Where(i => ids.Contains(i.CourseId))
+                .Select(i => i.CourseId)
+                .Distinct()
+                .ToListAsync())
+                .ToHashSet();
+            var remainingIds = ids.Where(id => !withIntervals.Contains(id)).ToList();
+            if (remainingIds.Count > 0)
+            {
+                var markerRows = await db.Waypoints
+                    .Where(w => remainingIds.Contains(w.CourseId)
+                        && (w.WaypointType == (int)WaypointType.StartInterval || w.WaypointType == (int)WaypointType.FinishInterval))
+                    .OrderBy(w => w.TimestampTicks)
+                    .ToListAsync();
+                foreach (var group in markerRows.GroupBy(w => w.CourseId))
+                {
+                    var markers = group.Select(w => new Waypoint
+                    {
+                        CourseId = w.CourseId,
+                        TimestampTicks = w.TimestampTicks,
+                        WaypointType = (WaypointType)w.WaypointType
+                    }).ToList();
+                    if (CourseIntervals.Pair(markers).Count > 0)
+                        withIntervals.Add(group.Key);
+                }
+            }
+            foreach (var course in courses)
+                course.HasIntervals = withIntervals.Contains(course.CourseId);
             return Results.Ok(courses);
         });
 
@@ -349,12 +377,18 @@ public static partial class GpsEndpoints
             if (!CanReadUser(http, config, login))
                 return Results.Unauthorized();
             var courses = await db.Courses.Where(c => c.Publish && c.Approved).ToListAsync();
+            var courseIds = courses.Select(c => c.CourseId).ToList();
+            var firstWaypoints = (await db.Waypoints
+                .Where(w => courseIds.Contains(w.CourseId))
+                .OrderBy(w => w.TimestampTicks)
+                .ToListAsync())
+                .GroupBy(w => w.CourseId)
+                .ToDictionary(g => g.Key, g => g.First());
             CourseRow? best = null;
             var bestMeters = double.MaxValue;
             foreach (var course in courses)
             {
-                var first = await db.Waypoints.Where(w => w.CourseId == course.CourseId).OrderBy(w => w.TimestampTicks).FirstOrDefaultAsync();
-                if (first is null)
+                if (!firstWaypoints.TryGetValue(course.CourseId, out var first))
                     continue;
                 var meters = GeoMath.DistanceMeters(latitude, longitude, first.Latitude, first.Longitude);
                 if (meters < bestMeters)
@@ -379,10 +413,12 @@ public static partial class GpsEndpoints
             return Results.Ok(await db.Races.Where(r => ids.Contains(r.RaceId)).ToListAsync());
         });
 
-        api.MapGet("/races/{id:guid}", async (Guid id, GpsTrainerDb db) =>
+        api.MapGet("/races/{id:guid}", async (Guid id, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
         {
             var race = await db.Races.FindAsync(id);
-            return race is null ? Results.NotFound() : Results.Ok(race);
+            if (race is null || (!race.Publish && !CanReadUser(http, config, race.Login)))
+                return Results.NotFound();
+            return Results.Ok(race);
         });
 
         api.MapPost("/races", async (Race body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>

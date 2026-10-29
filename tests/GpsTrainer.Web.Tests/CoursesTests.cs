@@ -83,6 +83,23 @@ public sealed class CoursesTests : TestContext
     }
 
     [Fact]
+    public void Courses_with_server_has_intervals_flag_do_not_fetch_intervals_per_course()
+    {
+        SignIn();
+        _api.Courses[0].HasIntervals = true;
+        _api.Courses[1].HasIntervals = false;
+        _api.Courses[2].HasIntervals = false;
+
+        var cut = RenderComponent<Courses>();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal($"intervals/{_loop}", rows[0].QuerySelector("a[href^='intervals/']")!.GetAttribute("href"));
+        Assert.Empty(rows[1].QuerySelectorAll("a[href^='intervals/']"));
+        Assert.Empty(rows[2].QuerySelectorAll("a[href^='intervals/']"));
+        Assert.Equal(0, _api.IntervalRequests);
+    }
+
+    [Fact]
     public void Delete_is_offered_only_for_the_signed_in_owners_courses()
     {
         SignIn();
@@ -181,6 +198,7 @@ public sealed class CoursesTests : TestContext
         public List<Guid> Deleted { get; } = [];
         public List<string> DeletedPaths { get; } = [];
         public bool RejectDelete { get; set; }
+        public int IntervalRequests { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -189,6 +207,7 @@ public sealed class CoursesTests : TestContext
                 return Json(Activities);
             if (path.EndsWith("/intervals", StringComparison.OrdinalIgnoreCase))
             {
+                IntervalRequests++;
                 var id = Guid.Parse(path.Split('/', StringSplitOptions.RemoveEmptyEntries)[^2]);
                 var body = WithIntervals.Contains(id)
                     ? new[] { new CourseIntervalDto { Name = "1 mi" } }

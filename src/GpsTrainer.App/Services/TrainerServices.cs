@@ -62,6 +62,10 @@ public static partial class ApiAddress
 
 public sealed class TrainerApi
 {
+    private static readonly HttpMessageHandler SharedHandler = new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+    };
     private readonly AppSession _session;
 
     public TrainerApi(AppSession session) => _session = session;
@@ -183,6 +187,7 @@ public sealed class TrainerApi
     public async Task InhibitCourseAsync(Guid id, string login)
     {
         using var http = Client();
+        Authorize(http);
         await http.PostAsync($"api/courses/{id}/inhibit-download?login={Uri.EscapeDataString(login)}", null);
     }
 
@@ -256,6 +261,7 @@ public sealed class TrainerApi
     public async Task InhibitRaceAsync(Guid id, string login)
     {
         using var http = Client();
+        Authorize(http);
         await http.PostAsync($"api/races/{id}/inhibit-download?login={Uri.EscapeDataString(login)}", null);
     }
 
@@ -280,7 +286,10 @@ public sealed class TrainerApi
         await http.PostAsJsonAsync($"api/users/{Uri.EscapeDataString(login)}/push", new PushRegistrationDto { Token = token });
     }
 
-    private HttpClient Client() => new() { BaseAddress = new Uri(ApiAddress.Current.TrimEnd('/') + "/") };
+    private HttpClient Client() => new(SharedHandler, disposeHandler: false)
+    {
+        BaseAddress = new Uri(ApiAddress.Current.TrimEnd('/') + "/")
+    };
 
     private void Authorize(HttpClient http)
     {
@@ -476,8 +485,8 @@ public sealed class SyncService
         foreach (var race in races)
         {
             _store.Database.UpsertRace(race);
-            foreach (var point in await _api.PositionsAsync(race.RaceId))
-                _store.Database.InsertPosition(point);
+            var positions = await _api.PositionsAsync(race.RaceId);
+            _store.Database.ReplacePositions(race.RaceId, positions);
         }
         var removedCourses = ForgetCourses(login, courses);
         var removedRaces = ForgetRaces(login, races);
@@ -1033,10 +1042,13 @@ public sealed partial class PackageAudioPlayer : IAudioCuePlayer
             AudioCue.Silence => "silence.mp3",
             _ => "beep.wav"
         };
-        await using var stream = await FileSystem.OpenAppPackageFileAsync(file);
         var cache = Path.Combine(FileSystem.CacheDirectory, file);
-        await using (var output = File.Create(cache))
+        if (!File.Exists(cache) || new FileInfo(cache).Length == 0)
+        {
+            await using var stream = await FileSystem.OpenAppPackageFileAsync(file);
+            await using var output = File.Create(cache);
             await stream.CopyToAsync(output);
+        }
         await PlayFileAsync(cache, cue == AudioCue.Silence && Preferences.Get("KeepAudioHeadphonesAlive", false));
     }
 
