@@ -96,6 +96,18 @@ public sealed class ElevationLineResponseDto
 {
     public bool Found { get; set; }
     public bool FromCache { get; set; }
+
+    /// <summary>
+    /// The selected source cannot answer. A missing key and an unknown
+    /// <c>Routing:ElevationProvider</c> both set this. Callers keep working either way.
+    /// </summary>
+    public bool Unavailable { get; set; }
+
+    /// <summary>
+    /// The source refused the lookup because its quota or rate limit was reached.
+    /// </summary>
+    public bool Limited { get; set; }
+
     public string Message { get; set; } = "";
     public List<ElevationSampleDto> Points { get; set; } = [];
 }

@@ -30,10 +30,8 @@ public static partial class GpsEndpoints
 
         api.MapPost("/routing/elevation", async (
             ElevationLineRequestDto body,
-            GpsTrainerDb db,
             IConfiguration config,
-            IRoutingProviderFactory providers,
-            RoutingSettingsStore store,
+            IElevationProvider elevation,
             AnonymousRoutingLimiter limiter,
             HttpContext http,
             CancellationToken cancellationToken) =>
@@ -41,18 +39,11 @@ public static partial class GpsEndpoints
             if (!AllowAnonymous(http, config, limiter))
                 return TooManyElevation();
 
-            var resolved = await store.ResolveAsync(db, config, cancellationToken);
-            if (!string.Equals(resolved.Provider, OpenRouteServiceRoutingProvider.ProviderName, StringComparison.OrdinalIgnoreCase))
-                return Results.Ok(new ElevationLineResponseDto { Message = "Elevation provider is not available." });
-            if (string.IsNullOrWhiteSpace(resolved.ApiKey))
-                return Results.Ok(new ElevationLineResponseDto { Message = "Elevation is not configured." });
-
-            var provider = providers.Get(resolved.Provider);
-            if (provider is null)
-                return Results.Ok(new ElevationLineResponseDto { Message = "Elevation provider is not available." });
-
-            var found = await provider.ElevationLineAsync(body ?? new ElevationLineRequestDto(), resolved.ApiKey, cancellationToken);
-            return Results.Ok(found);
+            var requested = body?.Points ?? [];
+            var found = await elevation.ElevationLineAsync(
+                requested.Select(point => (Longitude: point.Longitude, Latitude: point.Latitude)).ToList(),
+                cancellationToken);
+            return Results.Ok(WithElapsed(requested, found));
         });
 
         api.MapPost("/routing/loops", async (
@@ -173,6 +164,17 @@ public static partial class GpsEndpoints
             return RouteResponseDto.Fail("Routing provider is not available.");
 
         return await provider.RouteAsync(body, resolved.ApiKey, cancellationToken);
+    }
+
+    private static ElevationLineResponseDto WithElapsed(
+        IReadOnlyList<ElevationSampleDto> requested,
+        ElevationLineResponseDto response)
+    {
+        if (!response.Found || response.Points.Count != requested.Count)
+            return response;
+        for (var i = 0; i < requested.Count; i++)
+            response.Points[i].ElapsedKm = requested[i].ElapsedKm;
+        return response;
     }
 
     private static bool IsSignedIn(HttpContext http, IConfiguration config) =>

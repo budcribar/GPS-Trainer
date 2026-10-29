@@ -419,6 +419,10 @@ public class RoutingTests : IClassFixture<RoutingApiFactory>
             var parsed = JsonSerializer.Deserialize<ElevationLineResponseDto>(json, JsonOptions);
             Assert.True(parsed!.Found);
             Assert.False(parsed.FromCache);
+            Assert.False(parsed.Unavailable);
+            Assert.False(parsed.Limited);
+            Assert.Equal(0, parsed.Points[0].ElapsedKm);
+            Assert.Equal(1.1, parsed.Points[1].ElapsedKm);
             Assert.Equal(1.6, parsed.Points[0].AltitudeKm, 5);
             Assert.Equal(1.61, parsed.Points[1].AltitudeKm, 5);
             Assert.Equal("https://api.heigit.org/openelevationservice/v0/line", _factory.Ors.LastUrl);
@@ -577,18 +581,15 @@ public class OpenRouteServiceClientTests
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://ors.test/") };
         var client = new OpenRouteServiceClient(http);
         var cache = new ElevationLineCache();
-        var provider = new OpenRouteServiceRoutingProvider(client, cache);
         const string key = "header-only-ors-key";
-        var request = new ElevationLineRequestDto
+        var provider = new OpenRouteServiceElevationProvider(client, key, cache);
+        var points = new (double Longitude, double Latitude)[]
         {
-            Points =
-            [
-                new ElevationSampleDto { Latitude = 40.5, Longitude = -105.1, ElapsedKm = 0 },
-                new ElevationSampleDto { Latitude = 40.51, Longitude = -105.1, ElapsedKm = 1 }
-            ]
+            (-105.1, 40.5),
+            (-105.1, 40.51)
         };
 
-        var first = await provider.ElevationLineAsync(request, key, CancellationToken.None);
+        var first = await provider.ElevationLineAsync(points, CancellationToken.None);
         Assert.True(first.Found);
         Assert.False(first.FromCache);
         Assert.Equal(1.6, first.Points[0].AltitudeKm, 5);
@@ -601,7 +602,7 @@ public class OpenRouteServiceClientTests
         Assert.DoesNotContain(key, handler.Request.RequestUri.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(key, handler.Body, StringComparison.Ordinal);
 
-        var second = await provider.ElevationLineAsync(request, key, CancellationToken.None);
+        var second = await provider.ElevationLineAsync(points, CancellationToken.None);
         Assert.True(second.FromCache);
         Assert.Equal(1, handler.Calls);
         Assert.Equal(1.6, second.Points[0].AltitudeKm, 5);
@@ -620,16 +621,15 @@ public class OpenRouteServiceClientTests
             ResponseBody = """{"error":"quota header-only-ors-key"}"""
         };
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://ors.test/") };
-        var provider = new OpenRouteServiceRoutingProvider(new OpenRouteServiceClient(http), new ElevationLineCache());
         const string key = "header-only-ors-key";
-        var request = new ElevationLineRequestDto
-        {
-            Points = [new ElevationSampleDto { Latitude = 40.5, Longitude = -105.1 }]
-        };
-        var failed = await provider.ElevationLineAsync(request, key, CancellationToken.None);
+        var provider = new OpenRouteServiceElevationProvider(new OpenRouteServiceClient(http), key, new ElevationLineCache());
+        (double Longitude, double Latitude)[] points = [(-105.1, 40.5)];
+        var failed = await provider.ElevationLineAsync(points, CancellationToken.None);
         Assert.False(failed.Found);
+        Assert.True(failed.Limited);
+        Assert.False(failed.Unavailable);
         Assert.DoesNotContain(key, failed.Message, StringComparison.Ordinal);
-        var again = await provider.ElevationLineAsync(request, key, CancellationToken.None);
+        var again = await provider.ElevationLineAsync(points, CancellationToken.None);
         Assert.False(again.Found);
         Assert.Equal(2, handler.Calls);
     }
@@ -639,10 +639,12 @@ public class OpenRouteServiceClientTests
     {
         var handler = new RecordingOrsHandler();
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
-        var provider = new OpenRouteServiceRoutingProvider(new OpenRouteServiceClient(http));
         const string key = "header-only-ors-key";
+        var httpClient = new OpenRouteServiceClient(http);
+        var routing = new OpenRouteServiceRoutingProvider(httpClient);
+        var elevationProvider = new OpenRouteServiceElevationProvider(httpClient, key);
 
-        var route = await provider.RouteAsync(new RouteRequestDto
+        var route = await routing.RouteAsync(new RouteRequestDto
         {
             FromLatitude = 40.5853,
             FromLongitude = -105.0844,
@@ -652,17 +654,14 @@ public class OpenRouteServiceClientTests
         }, key, CancellationToken.None);
         Assert.True(route.Routed, route.Message);
 
-        var elevation = await provider.ElevationLineAsync(new ElevationLineRequestDto
-        {
-            Points =
-            [
-                new ElevationSampleDto { Latitude = 40.5, Longitude = -105.1 },
-                new ElevationSampleDto { Latitude = 40.51, Longitude = -105.1 }
-            ]
-        }, key, CancellationToken.None);
+        var elevation = await elevationProvider.ElevationLineAsync(
+        [
+            (-105.1, 40.5),
+            (-105.1, 40.51)
+        ], CancellationToken.None);
         Assert.True(elevation.Found, elevation.Message);
 
-        var place = await provider.GeocodeAsync("Fort Collins", key, CancellationToken.None);
+        var place = await routing.GeocodeAsync("Fort Collins", key, CancellationToken.None);
         Assert.True(place.Found, place.Message);
 
         Assert.Equal(3, handler.Calls.Count);
@@ -708,9 +707,11 @@ public class OpenRouteServiceClientTests
 
         var handler = new RecordingOrsHandler();
         using var http = new HttpClient(handler);
-        var provider = new OpenRouteServiceRoutingProvider(new OpenRouteServiceClient(http), endpoints: legacy);
         const string key = "legacy-header-key";
-        await provider.RouteAsync(new RouteRequestDto
+        var httpClient = new OpenRouteServiceClient(http);
+        var routing = new OpenRouteServiceRoutingProvider(httpClient, legacy);
+        var elevationProvider = new OpenRouteServiceElevationProvider(httpClient, key, endpoints: legacy);
+        await routing.RouteAsync(new RouteRequestDto
         {
             FromLatitude = 40.5853,
             FromLongitude = -105.0844,
@@ -718,11 +719,8 @@ public class OpenRouteServiceClientTests
             ToLongitude = -105.07,
             Activity = "Running"
         }, key, CancellationToken.None);
-        await provider.ElevationLineAsync(new ElevationLineRequestDto
-        {
-            Points = [new ElevationSampleDto { Latitude = 40.5, Longitude = -105.1 }]
-        }, key, CancellationToken.None);
-        await provider.GeocodeAsync("Fort Collins", key, CancellationToken.None);
+        await elevationProvider.ElevationLineAsync([(-105.1, 40.5)], CancellationToken.None);
+        await routing.GeocodeAsync("Fort Collins", key, CancellationToken.None);
 
         Assert.Equal("https://api.openrouteservice.org/v2/directions/foot-walking/geojson", handler.Calls[0].Url);
         Assert.Equal("https://api.openrouteservice.org/elevation/line", handler.Calls[1].Url);

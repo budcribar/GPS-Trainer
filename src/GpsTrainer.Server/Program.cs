@@ -54,6 +54,8 @@ builder.Services.AddScoped<LoopGenerationService>();
 builder.Services.AddScoped<RoutingSettingsStore>();
 builder.Services.AddScoped<IRoutingProvider, OpenRouteServiceRoutingProvider>();
 builder.Services.AddScoped<IRoutingProviderFactory, RoutingProviderFactory>();
+builder.Services.AddScoped<OpenRouteServiceElevationProvider>();
+builder.Services.AddScoped<IElevationProvider>(sp => ElevationProviderSelection.Resolve(sp));
 
 builder.Services.AddDbContext<GpsTrainerDb>(options =>
 {
