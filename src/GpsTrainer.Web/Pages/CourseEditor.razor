@@ -38,14 +38,14 @@
                     <button type="button" @onclick="CloseProfile" aria-label="Close profile">X</button>
                 </div>
                 <p class="profile-summary">Climb/descent @Chart.ClimbDescent</p>
-                <div class="profile-chart" @onclick="OpenProfileMenu" @oncontextmenu="OpenProfileMenu" @oncontextmenu:preventDefault="true">
+                <div class="profile-chart" @onpointerdown="ShowElevation" @onpointermove="ShowElevation" @onclick="OpenProfileMenu" @oncontextmenu="OpenProfileMenu" @oncontextmenu:preventDefault="true">
                 @if (!Chart.HasElevation)
                 {
                     <p>No elevation on this course yet. A road route fills the profile from OpenRouteService.</p>
                 }
                 else
                 {
-                    <svg id="course-profile" viewBox="0 0 760 230" role="img" aria-label="@Chart.Title" @onmousemove="ProfileHover" @onmousemove:stopPropagation="true">
+                    <svg id="course-profile" viewBox="0 0 760 230" role="img" aria-label="@Chart.Title" @onpointerdown="ShowElevation" @onpointermove="ShowElevation" @onpointerdown:stopPropagation="true">
                         <rect x="0" y="0" width="760" height="230" fill="transparent" />
                         <text x="380" y="18" text-anchor="middle" fill="#585880" font-size="14">@Chart.Title</text>
                         <text x="16" y="120" fill="#585880" font-size="13" font-weight="700" transform="rotate(-90 16 120)">@Chart.AltitudeAxis</text>
@@ -62,7 +62,7 @@
                         <text x="64" y="40" text-anchor="end" fill="#585880" font-size="11">@Chart.MaxAltitude</text>
                         <text x="64" y="196" text-anchor="end" fill="#585880" font-size="11">@Chart.MinAltitude</text>
                     </svg>
-                    <p class="profile-hover">@hover</p>
+                    <p class="profile-hover" role="status">@(string.IsNullOrEmpty(hover) ? "Touch the profile to read elevation." : hover)</p>
                 }
                 </div>
             </div>
@@ -657,7 +657,7 @@
         }
     }
 
-    private async Task ProfileHover(MouseEventArgs args)
+    private async Task ShowElevation(PointerEventArgs args)
     {
         try
         {
@@ -726,6 +726,48 @@
             return;
         }
         await FinishEdit(sketch.InsertAlongRoute(type, elapsed), type + " placed on the route. Save the course to keep it.");
+    }
+
+    private async Task FillElevationAsync()
+    {
+        if (!CourseElevation.NeedsLookup(waypoints))
+            return;
+        var missing = waypoints.Where(point => !CourseEdits.IsInterval(point) && !SummitSearch.IsKnown(point.AltitudeKm)).ToList();
+        var altitudes = new double?[missing.Count];
+        for (var offset = 0; offset < missing.Count; offset += CourseElevation.BatchSize)
+        {
+            var count = Math.Min(CourseElevation.BatchSize, missing.Count - offset);
+            try
+            {
+                var response = await Api.ElevationLineAsync(new ElevationLineRequestDto
+                {
+                    Points = Enumerable.Range(0, count).Select(index =>
+                    {
+                        var point = missing[offset + index];
+                        return new ElevationSampleDto
+                        {
+                            Latitude = point.Latitude,
+                            Longitude = point.Longitude,
+                            ElapsedKm = point.ElapsedDistanceKm,
+                            AltitudeKm = point.AltitudeKm
+                        };
+                    }).ToList()
+                });
+                if (response is not { Found: true } || response.Points.Count != count)
+                    return;
+                for (var index = 0; index < count; index++)
+                    altitudes[offset + index] = response.Points[index].AltitudeKm;
+            }
+            catch (HttpRequestException)
+            {
+                return;
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+        }
+        CourseElevation.Apply(waypoints, altitudes);
     }
 
     private async Task<IReadOnlyList<double?>> MeasureElevations(IReadOnlyList<Waypoint> route, IReadOnlyList<double> elapsedKm)
@@ -1116,7 +1158,6 @@
         }
         if (string.IsNullOrWhiteSpace(course.Name))
             course.Name = "Untitled course";
-        SyncElevation();
         var saved = await Api.SaveCourseAsync(course, creating);
         if (saved is null)
         {
@@ -1144,6 +1185,8 @@
             }
             else
                 course.ElapsedDistanceKm = waypoints.Max(wp => wp.ElapsedDistanceKm);
+            await FillElevationAsync();
+            SyncElevation();
             savedWaypoints = await Api.SaveWaypointsAsync(course.CourseId, waypoints);
             await Api.SaveCourseAsync(course);
         }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using GpsTrainer.Server.Data;
+using GpsTrainer.Server.Routing;
 using GpsTrainer.Server.Security;
 using Microsoft.EntityFrameworkCore;
 
@@ -326,7 +327,15 @@ public static partial class GpsEndpoints
             }));
         });
 
-        api.MapPut("/courses/{id:guid}/waypoints", async (Guid id, List<Waypoint> body, GpsTrainerDb db, HttpContext http, IConfiguration config) =>
+        api.MapPut("/courses/{id:guid}/waypoints", async (
+            Guid id,
+            List<Waypoint> body,
+            GpsTrainerDb db,
+            HttpContext http,
+            IConfiguration config,
+            IRoutingProviderFactory providers,
+            RoutingSettingsStore store,
+            CancellationToken cancellationToken) =>
         {
             var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
             await gate.WaitAsync(http.RequestAborted);
@@ -355,7 +364,9 @@ public static partial class GpsEndpoints
                     intervals = defs;
                     finalWaypoints = IntervalCourse.WithMarkers(body, defs);
                 }
-                if (!TryStampWaypointRows(id, finalWaypoints, out var rows))
+                var editable = finalWaypoints as List<Waypoint> ?? finalWaypoints.ToList();
+                await TryFillElevationAsync(editable, course, db, config, providers, store, cancellationToken);
+                if (!TryStampWaypointRows(id, editable, out var rows))
                     return Results.BadRequest();
                 await using var transaction = await db.Database.BeginTransactionAsync();
                 db.Waypoints.RemoveRange(db.Waypoints.Where(w => w.CourseId == id));
@@ -701,6 +712,68 @@ public static partial class GpsEndpoints
 
     private static bool CanReadCourse(HttpContext http, IConfiguration config, CourseRow course) =>
         CourseIsPublic(course) || CanReadUser(http, config, course.Login);
+
+    /// <summary>
+    /// Road drawing and phone uploads store the unknown-altitude sentinel.
+    /// A configured elevation provider fills those points before they are saved.
+    /// A lookup failure leaves the sentinel in place and still saves the course.
+    /// </summary>
+    private static async Task TryFillElevationAsync(
+        List<Waypoint> waypoints,
+        CourseRow course,
+        GpsTrainerDb db,
+        IConfiguration config,
+        IRoutingProviderFactory providers,
+        RoutingSettingsStore store,
+        CancellationToken cancellationToken)
+    {
+        if (!CourseElevation.NeedsLookup(waypoints))
+            return;
+        try
+        {
+            var resolved = await store.ResolveAsync(db, config, cancellationToken);
+            if (!string.Equals(resolved.Provider, OpenRouteServiceRoutingProvider.ProviderName, StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(resolved.ApiKey))
+                return;
+            var provider = providers.Get(resolved.Provider);
+            if (provider is null)
+                return;
+
+            var unknown = waypoints
+                .Where(point => !CourseEdits.IsInterval(point) && !SummitSearch.IsKnown(point.AltitudeKm))
+                .ToList();
+            var altitudes = new List<double?>(unknown.Count);
+            for (var offset = 0; offset < unknown.Count; offset += CourseElevation.BatchSize)
+            {
+                var slice = unknown.Skip(offset).Take(CourseElevation.BatchSize).ToList();
+                var response = await provider.ElevationLineAsync(new ElevationLineRequestDto
+                {
+                    Points = slice.Select(sample => new ElevationSampleDto
+                    {
+                        Latitude = sample.Latitude,
+                        Longitude = sample.Longitude,
+                        ElapsedKm = sample.ElapsedDistanceKm,
+                        AltitudeKm = sample.AltitudeKm
+                    }).ToList()
+                }, resolved.ApiKey, cancellationToken);
+                if (response is not { Found: true } || response.Points.Count != slice.Count)
+                    return;
+                altitudes.AddRange(response.Points.Select(sample => (double?)sample.AltitudeKm));
+            }
+
+            if (CourseElevation.Apply(waypoints, altitudes) == 0)
+                return;
+            var climb = ElevationProfile.GainLoss(waypoints);
+            course.AltitudeGainKm = climb.GainKm;
+            course.AltitudeLossKm = climb.LossKm;
+        }
+        catch (HttpRequestException)
+        {
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
 
     // A missing tick used to be filled from 1, which collided with an explicit tick of 1
     // and threw on the primary key. Duplicate explicit ticks are rejected before any write.
