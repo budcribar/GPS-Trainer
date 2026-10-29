@@ -147,7 +147,7 @@ public sealed class CourseEditorCoverageTests : TestContext
         await Draw(cut);
 
         await cut.InvokeAsync(() =>
-            cut.Find("#course-profile").TriggerEvent("onmousemove", new MouseEventArgs { ClientX = 200, ClientY = 80 }));
+            cut.Find("#course-profile").TriggerEvent("onpointermove", new PointerEventArgs { ClientX = 200, ClientY = 80 }));
 
         Assert.Matches(@"\d+\.\d+mi,\d+ft", cut.Find(".profile-hover").TextContent);
     }

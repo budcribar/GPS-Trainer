@@ -34,6 +34,16 @@ public class EditorDialogLayoutTests
     }
 
     [Fact]
+    public void Help_opens_inside_a_phone_width()
+    {
+        var placed = EditorDialogLayout.Place(null, course: false, 390, 844, 320, 400);
+
+        Assert.Equal(62, placed.Left);
+        Assert.InRange(placed.Top, 0, 844);
+        Assert.True(placed.Left + 320 <= 390);
+    }
+
+    [Fact]
     public void Help_opens_at_the_2013_spot_beside_the_map()
     {
         var placed = EditorDialogLayout.Place(null, course: false, 1400, 900, 352, 340);
