@@ -367,14 +367,20 @@ public sealed class SyncService
     private readonly TrainerRepository _store;
     private readonly TrainerApi _api;
     private readonly AppSession _session;
+    private readonly Func<bool> _recording;
+    private readonly CourseSyncNotice _notice;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public SyncService(TrainerRepository store, TrainerApi api, AppSession session)
+    public SyncService(TrainerRepository store, TrainerApi api, AppSession session, Func<bool> recording, CourseSyncNotice notice)
     {
         _store = store;
         _api = api;
         _session = session;
+        _recording = recording;
+        _notice = notice;
     }
+
+    public bool IsBusy => _gate.CurrentCount == 0;
 
     /// <summary>
     /// The existing synchronize, started after Finish has stored the track.
@@ -473,9 +479,42 @@ public sealed class SyncService
             foreach (var point in await _api.PositionsAsync(race.RaceId))
                 _store.Database.InsertPosition(point);
         }
+        var removedCourses = ForgetCourses(login, courses);
+        var removedRaces = ForgetRaces(login, races);
+        _notice.Report(removedCourses, removedRaces);
         _store.Database.SetUserTimestamp(status.UserTimestamp);
         notes.Add($"{courses.Count} courses, {races.Count} races");
         return string.Join("\n", notes);
+    }
+
+    private List<Guid> ForgetCourses(string login, IReadOnlyList<Course> serverCourses)
+    {
+        var actions = _store.Database.ListActions();
+        var races = _store.Database.ListRaces().Select(race => (race.RaceId, race.CourseId));
+        var drop = DownloadedMirror.IdsToRemove(
+            _store.Database.ListCourses(login).Select(course => course.CourseId),
+            serverCourses.Select(course => course.CourseId),
+            DownloadedMirror.ProtectedCourseIds(actions, races),
+            _recording());
+        foreach (var id in drop)
+        {
+            foreach (var race in _store.Database.ListRaces(id))
+                _store.Database.DeleteRace(race.RaceId);
+            _store.Database.DeleteCourse(id);
+        }
+        return drop;
+    }
+
+    private List<Guid> ForgetRaces(string login, IReadOnlyList<Race> serverRaces)
+    {
+        var drop = DownloadedMirror.IdsToRemove(
+            _store.Database.ListRaces().Where(race => race.Login == login).Select(race => race.RaceId),
+            serverRaces.Select(race => race.RaceId),
+            DownloadedMirror.PendingRaceIds(_store.Database.ListActions()),
+            _recording());
+        foreach (var id in drop)
+            _store.Database.DeleteRace(id);
+        return drop;
     }
 
     private async Task<bool> PlayAsync(SyncActionRecord action, string login)

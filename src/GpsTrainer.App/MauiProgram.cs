@@ -18,7 +18,22 @@ public static class MauiProgram
 		builder.Services.AddSingleton<AppSession>();
 		builder.Services.AddSingleton<TrainerRepository>();
 		builder.Services.AddSingleton<TrainerApi>();
-		builder.Services.AddSingleton<SyncService>();
+		builder.Services.AddSingleton<CourseSyncNotice>();
+		builder.Services.AddSingleton<CourseScreenSync>();
+		builder.Services.AddSingleton(sp =>
+		{
+			bool Recording() => sp.GetRequiredService<RunSession>().State is RunStateKind.Learning or RunStateKind.Racing;
+			return new SyncService(
+				sp.GetRequiredService<TrainerRepository>(),
+				sp.GetRequiredService<TrainerApi>(),
+				sp.GetRequiredService<AppSession>(),
+				Recording,
+				sp.GetRequiredService<CourseSyncNotice>());
+		});
+		builder.Services.AddSingleton(sp => new ForegroundSync(
+			sp.GetRequiredService<SyncService>(),
+			sp.GetRequiredService<AppSession>(),
+			() => sp.GetRequiredService<RunSession>().State is RunStateKind.Learning or RunStateKind.Racing));
 		builder.Services.AddSingleton<DatabaseMaintenance>();
 		builder.Services.AddSingleton<RunSession>();
 		builder.Services.AddSingleton<IAudioCuePlayer, PackageAudioPlayer>();
