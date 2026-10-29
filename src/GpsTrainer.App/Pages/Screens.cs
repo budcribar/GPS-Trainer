@@ -1761,7 +1761,7 @@ public class AboutPage : ContentPage
         Content = new ScrollView
         {
             Content = Ui.Column(icon, Ui.Heading(AppStrings.app_name),
-                new Label { Text = AppStrings.rev + " 1.46" },
+                new Label { Text = AppStrings.rev + " 1.47" },
                 new Label { Text = AppStrings.build + " 20131013" },
                 new Label { Text = AppStrings.peak_software, LineBreakMode = LineBreakMode.WordWrap })
         };

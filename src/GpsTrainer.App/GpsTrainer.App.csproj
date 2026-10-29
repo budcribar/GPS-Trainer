@@ -30,8 +30,8 @@
 		<DefaultApiBaseUrl Condition="'$(DefaultApiBaseUrl)' == ''"></DefaultApiBaseUrl>
 
 		<!-- versionName / versionCode. Raise ApplicationVersion for every Play upload. -->
-		<ApplicationDisplayVersion>1.46</ApplicationDisplayVersion>
-		<ApplicationVersion>146</ApplicationVersion>
+		<ApplicationDisplayVersion>1.47</ApplicationDisplayVersion>
+		<ApplicationVersion>147</ApplicationVersion>
 
 		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
 		<WindowsPackageType>None</WindowsPackageType>
