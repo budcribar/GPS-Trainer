@@ -37,8 +37,11 @@ Directions, elevation, and geocoding use the HeiGIT host. The key stays on the s
 
 | Key | Default | Path |
 |---|---|---|
+| `Routing:ElevationProvider` | `OpenRouteService` | elevation source behind `IElevationProvider` |
 | `Routing:DirectionsBaseUrl` | `https://api.heigit.org/openrouteservice/` | `v2/directions/{profile}/geojson` |
 | `Routing:ElevationBaseUrl` | `https://api.heigit.org/openelevationservice/v0/` | `line` |
 | `Routing:GeocodeBaseUrl` | `https://api.heigit.org/pelias/v1/` | `search?size=1&text=` |
+
+`Routing:ElevationProvider` is read by the server only. `OpenRouteService` is the only implementation. It keeps the HeiGIT elevation host, the process elevation cache, and the same server key. Anonymous elevation stays on the per-address limiter. Signed-in riders do not get a new daily cap; 2,000 elevation requests a day is the OpenRouteService free plan.
 
 These three defaults win. `Routing:BaseUrl` is not set in `appsettings.json`, and a leftover `Routing__BaseUrl` does not replace them. That key is used only when all three bases are unset. If it is `https://api.openrouteservice.org/`, the old paths (`elevation/line` and `geocode/search`) stay in place until that host shuts down (2–6 Nov 2026). Railway should keep `Routing__OrsApiKey` and does not need `Routing__BaseUrl`.

@@ -333,8 +333,7 @@ public static partial class GpsEndpoints
             GpsTrainerDb db,
             HttpContext http,
             IConfiguration config,
-            IRoutingProviderFactory providers,
-            RoutingSettingsStore store,
+            IElevationProvider elevation,
             CancellationToken cancellationToken) =>
         {
             var gate = WaypointSaveLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
@@ -365,7 +364,7 @@ public static partial class GpsEndpoints
                     finalWaypoints = IntervalCourse.WithMarkers(body, defs);
                 }
                 var editable = finalWaypoints as List<Waypoint> ?? finalWaypoints.ToList();
-                await TryFillElevationAsync(editable, course, db, config, providers, store, cancellationToken);
+                await TryFillElevationAsync(editable, course, elevation, cancellationToken);
                 if (!TryStampWaypointRows(id, editable, out var rows))
                     return Results.BadRequest();
                 await using var transaction = await db.Database.BeginTransactionAsync();
@@ -721,24 +720,13 @@ public static partial class GpsEndpoints
     private static async Task TryFillElevationAsync(
         List<Waypoint> waypoints,
         CourseRow course,
-        GpsTrainerDb db,
-        IConfiguration config,
-        IRoutingProviderFactory providers,
-        RoutingSettingsStore store,
+        IElevationProvider elevation,
         CancellationToken cancellationToken)
     {
         if (!CourseElevation.NeedsLookup(waypoints))
             return;
         try
         {
-            var resolved = await store.ResolveAsync(db, config, cancellationToken);
-            if (!string.Equals(resolved.Provider, OpenRouteServiceRoutingProvider.ProviderName, StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(resolved.ApiKey))
-                return;
-            var provider = providers.Get(resolved.Provider);
-            if (provider is null)
-                return;
-
             var unknown = waypoints
                 .Where(point => !CourseEdits.IsInterval(point) && !SummitSearch.IsKnown(point.AltitudeKm))
                 .ToList();
@@ -746,17 +734,10 @@ public static partial class GpsEndpoints
             for (var offset = 0; offset < unknown.Count; offset += CourseElevation.BatchSize)
             {
                 var slice = unknown.Skip(offset).Take(CourseElevation.BatchSize).ToList();
-                var response = await provider.ElevationLineAsync(new ElevationLineRequestDto
-                {
-                    Points = slice.Select(sample => new ElevationSampleDto
-                    {
-                        Latitude = sample.Latitude,
-                        Longitude = sample.Longitude,
-                        ElapsedKm = sample.ElapsedDistanceKm,
-                        AltitudeKm = sample.AltitudeKm
-                    }).ToList()
-                }, resolved.ApiKey, cancellationToken);
-                if (response is not { Found: true } || response.Points.Count != slice.Count)
+                var response = await elevation.ElevationLineAsync(
+                    slice.Select(sample => (Longitude: sample.Longitude, Latitude: sample.Latitude)).ToList(),
+                    cancellationToken);
+                if (response.Unavailable || response.Limited || response is not { Found: true } || response.Points.Count != slice.Count)
                     return;
                 altitudes.AddRange(response.Points.Select(sample => (double?)sample.AltitudeKm));
             }

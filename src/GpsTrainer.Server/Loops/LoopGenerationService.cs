@@ -11,7 +11,7 @@ public sealed class LoopGenerationService
     private readonly FortCollinsNetworkCatalog _network;
     private readonly IOpenRouteServiceClient _client;
     private readonly OpenRouteServiceEndpoints _endpoints;
-    private readonly ElevationLineCache _elevationCache;
+    private readonly IElevationProvider _elevation;
     private readonly LoopSnapCache _snapCache;
     private readonly OrsQuotaGate _quota;
 
@@ -19,14 +19,14 @@ public sealed class LoopGenerationService
         FortCollinsNetworkCatalog network,
         IOpenRouteServiceClient client,
         OpenRouteServiceEndpoints endpoints,
-        ElevationLineCache elevationCache,
+        IElevationProvider elevation,
         LoopSnapCache snapCache,
         OrsQuotaGate quota)
     {
         _network = network;
         _client = client;
         _endpoints = endpoints;
-        _elevationCache = elevationCache;
+        _elevation = elevation;
         _snapCache = snapCache;
         _quota = quota;
     }
@@ -79,7 +79,7 @@ public sealed class LoopGenerationService
 
             if (allowOrs && !string.IsNullOrWhiteSpace(apiKey) && !quotaHit && calls < MaxOrsCalls && !current.ElevationKnown)
             {
-                var elevated = await TryElevationAsync(current, apiKey, cancellationToken).ConfigureAwait(false);
+                var elevated = await TryElevationAsync(current, cancellationToken).ConfigureAwait(false);
                 calls += elevated.Calls;
                 if (elevated.Quota)
                     quotaHit = true;
@@ -165,30 +165,18 @@ public sealed class LoopGenerationService
     }
 
     private async Task<(LoopRoute? Route, int Calls, bool Quota)> TryElevationAsync(
-        LoopRoute route, string apiKey, CancellationToken cancellationToken)
+        LoopRoute route, CancellationToken cancellationToken)
     {
         var sampled = LoopGeometry.Sample(route.Points, 160);
         if (sampled.Count < 2)
             return (null, 0, false);
-        var samples = sampled.Select(point => new ElevationSampleDto
-        {
-            Latitude = point.Latitude,
-            Longitude = point.Longitude
-        }).ToList();
-        var key = _elevationCache.KeyFor(samples);
-        if (_elevationCache.TryGet(key, out var cached) && cached.Length == samples.Count)
-            return (ApplyElevation(route, sampled, cached), 0, false);
 
-        var body = JsonSerializer.Serialize(new
-        {
-            format_in = "polyline",
-            format_out = "polyline",
-            geometry = samples.Select(point => new[] { point.Longitude, point.Latitude }).ToArray()
-        });
-        OrsHttpResult result;
+        ElevationLineResponseDto response;
         try
         {
-            result = await _client.PostJsonAsync(_endpoints.ElevationLine(), body, apiKey, cancellationToken).ConfigureAwait(false);
+            response = await _elevation.ElevationLineAsync(
+                sampled.Select(point => (Longitude: point.Longitude, Latitude: point.Latitude)).ToList(),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (HttpRequestException)
         {
@@ -199,16 +187,14 @@ public sealed class LoopGenerationService
             return (null, 1, false);
         }
 
-        if (OrsQuotaGate.IsQuota(result.StatusCode, result.Body))
-            return (null, 1, true);
-        if (result.StatusCode is < 200 or >= 300)
-            return (null, 1, false);
-        var parsed = OrsGeoJson.ParseElevation(result.Body);
-        if (!parsed.Ok || parsed.Meters.Length != samples.Count)
-            return (null, 1, false);
-        var kilometers = parsed.Meters.Select(meters => meters / 1000.0).ToArray();
-        _elevationCache.Store(key, kilometers);
-        return (ApplyElevation(route, sampled, kilometers), 1, false);
+        if (response.Unavailable)
+            return (null, 0, false);
+        var calls = response.FromCache ? 0 : 1;
+        if (response.Limited)
+            return (null, calls, true);
+        if (!response.Found || response.Points.Count != sampled.Count)
+            return (null, calls, false);
+        return (ApplyElevation(route, sampled, response.Points.Select(point => point.AltitudeKm).ToArray()), calls, false);
     }
 
     private static LoopRoute ApplyElevation(LoopRoute route, IReadOnlyList<GeoCoord> sampled, IReadOnlyList<double> altitudeKm)
